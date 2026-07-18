@@ -16,9 +16,14 @@ const PORT = process.env.PORT || 5000;
 app.set('trust proxy', 1);
 
 // Ensure upload dirs exist (local/dev; cloud uses Supabase Storage)
+// On Vercel the filesystem is read-only except /tmp — never crash boot on mkdir
 ['uploads', 'uploads/posts', 'uploads/avatars'].forEach((dir) => {
-  const full = path.join(__dirname, dir);
-  if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
+  try {
+    const full = path.join(__dirname, dir);
+    if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
+  } catch (e) {
+    // ignore EROFS etc. on serverless
+  }
 });
 
 // Security headers
@@ -190,22 +195,22 @@ async function startServer(opts = {}) {
 
   try {
     const db = getSupabase();
-    const tableStatus = await checkSupabaseTables(db);
-    const missing = Object.entries(tableStatus).filter(([, v]) => !v.ok);
-    if (missing.length) {
-      console.error('❌ Required tables missing or inaccessible:');
-      missing.forEach(([t, v]) => console.error(`   - ${t}: ${v.error}`));
-      if (shouldListen) {
+    // Fast connectivity check (full table scan only for local listen / health detail)
+    const { error: pingError } = await db.from('users').select('id', { head: true, count: 'exact' }).limit(1);
+    if (pingError) {
+      throw new Error(pingError.message || 'Cannot reach users table');
+    }
+    if (shouldListen) {
+      const tableStatus = await checkSupabaseTables(db);
+      const missing = Object.entries(tableStatus).filter(([, v]) => !v.ok);
+      if (missing.length) {
+        console.error('❌ Required tables missing or inaccessible:');
+        missing.forEach(([t, v]) => console.error(`   - ${t}: ${v.error}`));
         console.error('   Run server/db/migrations/001_setup_step_a.sql, then restart.\n');
         process.exit(1);
       }
-      app.get('/api/health', (req, res) =>
-        res.status(503).json({ status: 'ERROR', message: 'Missing tables', missing })
-      );
-      app.get('/api/ready', (req, res) => res.status(503).json({ ready: false }));
-      return app;
     }
-    console.log('✅ Connected to Supabase Postgres (all tables OK)');
+    console.log('✅ Connected to Supabase Postgres');
   } catch (err) {
     console.error('❌ Supabase setup error:', err.message);
     if (shouldListen) {
@@ -216,6 +221,7 @@ async function startServer(opts = {}) {
       res.status(503).json({ status: 'ERROR', message: err.message })
     );
     app.get('/api/ready', (req, res) => res.status(503).json({ ready: false, error: err.message }));
+    app.use('/api', (req, res) => res.status(503).json({ message: err.message || 'API not ready' }));
     return app;
   }
 
