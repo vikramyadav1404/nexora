@@ -110,7 +110,7 @@ router.post('/register', authLimiter, async (req, res) => {
       console.error('register error:', error);
       if (error.message?.includes('column') || error.code === 'PGRST204') {
         return res.status(503).json({
-          message: 'Database schema incomplete. Run server/db/setup_step_a.sql in Supabase SQL Editor.'
+          message: 'Database schema incomplete. Run server/db/migrations/001_setup_step_a.sql in Supabase SQL Editor.'
         });
       }
       if (error.code === '23505') {

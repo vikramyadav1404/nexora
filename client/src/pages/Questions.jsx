@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Search, Plus, CheckCircle, MessageSquare, ThumbsUp, Eye, Filter, Tag, Clock } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 

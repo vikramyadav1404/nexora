@@ -3,6 +3,23 @@ const bcrypt = require('bcryptjs');
 /** Public author fields for embeds */
 const AUTHOR_FIELDS = 'id, name, avatar, points, badges, subscription_plan, subscription_expires_at';
 
+/**
+ * Make relative upload paths absolute when PUBLIC_API_URL / API is known.
+ * Leaves http(s) and empty values unchanged (Supabase Storage URLs stay as-is).
+ */
+function publicAssetUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  if (/^https?:\/\//i.test(url) || url.startsWith('data:')) return url;
+  const base = (
+    process.env.PUBLIC_API_URL ||
+    process.env.API_PUBLIC_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    ''
+  ).replace(/\/$/, '');
+  if (base && url.startsWith('/')) return `${base}${url}`;
+  return url;
+}
+
 function isToday(date) {
   if (!date) return false;
   const d = new Date(date);
@@ -50,7 +67,12 @@ async function hashPassword(password) {
 }
 
 async function comparePassword(plain, hash) {
-  return bcrypt.compare(plain, hash);
+  if (!plain || !hash || typeof hash !== 'string') return false;
+  try {
+    return await bcrypt.compare(plain, hash);
+  } catch {
+    return false;
+  }
 }
 
 /** Map DB user row → API shape expected by the React client */
@@ -71,7 +93,7 @@ function shapeUser(row, extras = {}) {
     name: safe.name,
     email: safe.email,
     phone: safe.phone || '',
-    avatar: safe.avatar || '',
+    avatar: publicAssetUrl(safe.avatar || ''),
     bio: safe.bio || '',
     language: safe.language || 'en',
     gender: safe.gender || '',
@@ -114,7 +136,7 @@ function shapeAuthor(row) {
     _id: row.id,
     id: row.id,
     name: row.name,
-    avatar: row.avatar || '',
+    avatar: publicAssetUrl(row.avatar || ''),
     points: row.points || 0,
     badges: row.badges || [],
     subscription: {
@@ -130,10 +152,11 @@ function shapePost(post, { author, media = [], likes = [], comments = [] } = {})
     id: post.id,
     author: author || shapeAuthor({ id: post.author_id }),
     content: post.content || '',
-    media: media.map(m => ({ type: m.type, url: m.url })),
+    media: media.map(m => ({ type: m.type, url: publicAssetUrl(m.url) })),
     likes: likes.map(l => (typeof l === 'string' ? l : l.user_id)),
     comments: comments.map(c => ({
       _id: c.id,
+      id: c.id,
       author: c.author || shapeAuthor({ id: c.author_id, name: 'User' }),
       content: c.content,
       createdAt: c.created_at
@@ -204,6 +227,7 @@ function shapeTransaction(t) {
 
 module.exports = {
   AUTHOR_FIELDS,
+  publicAssetUrl,
   isToday,
   computeBadges,
   getActivePlan,

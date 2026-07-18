@@ -21,14 +21,14 @@ Ship criteria for calling this project **v1.0 complete**.
 | # | Task | Done when |
 |---|------|-----------|
 | 1 | Create Supabase project | Project exists |
-| 2 | Run `server/db/setup_step_a.sql` | Tables visible |
+| 2 | Run `server/db/migrations/001_setup_step_a.sql` | Tables visible |
 | 3 | Set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` in `server/.env` | Real keys (not placeholders) |
 | 4 | Set `DEMO_MODE=false` | |
 | 5 | `cd server && npm run verify:supabase` | ✅ Step A database OK |
 | 6 | `npm run dev` shows **Supabase Postgres** | Not DEMO MODE |
 | 7 | Register new user → row in Table Editor | Data persists after restart |
 
-Guide: **`STEP_A_SUPABASE.md`**
+Guide: **`docs/step-a-supabase.md`**
 
 ---
 

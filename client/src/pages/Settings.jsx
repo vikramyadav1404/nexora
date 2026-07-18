@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Globe, Shield, Bell, Key, Smartphone, Mail, Check, AlertTriangle, RefreshCw, Eye, EyeOff, UserCheck, Users, Sparkles } from 'lucide-react';
+import { Globe, Shield, Key, Smartphone, Mail, Check, AlertTriangle, RefreshCw, Eye, EyeOff, UserCheck, Users, Sparkles } from 'lucide-react';
 import { LANGUAGE_META } from '../i18n/translations';
 
 export default function Settings() {

@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
-import { Star, Award, Users, UserPlus, UserMinus, ArrowRight, Gift, Edit2, Save, X, Camera } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { Award, Users, UserPlus, UserMinus, ArrowRight, Gift, Edit2, Save, X, Camera } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 export default function Profile() {

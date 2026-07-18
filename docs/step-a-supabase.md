@@ -15,7 +15,7 @@ https://supabase.com → **New project**
 
 ### 2. Create tables
 1. Supabase → **SQL Editor** → **New query**
-2. Open **`server/db/setup_step_a.sql`**
+2. Open **`server/db/migrations/001_setup_step_a.sql`**
 3. Paste **all** of it → **Run**
 4. Table Editor should show: `users`, `posts`, `questions`, `answers`, `notifications`, `bookmarks`, …
 

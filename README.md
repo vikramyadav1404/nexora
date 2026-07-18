@@ -24,7 +24,7 @@ React  →  Express (JWT, business rules)  →  Supabase Postgres
 
 ### 2. Database schema
 1. Open Supabase → **SQL Editor** → New query  
-2. Paste **all** of `server/db/setup_step_a.sql`  
+2. Paste **all** of `server/db/migrations/001_setup_step_a.sql`  
 3. Run it  
 
 Tables created include: `users`, `posts`, `questions`, `answers`, `friendships`, `follows`, `notifications`, `bookmarks`, `blocks`, `reports`, `transactions`, `point_transfers`, …
@@ -107,18 +107,26 @@ DEMO_MODE=true
 
 ```text
 nexora-clean/
-  client/           React app
+  client/src/
+    components/     PascalCase (Navbar.jsx, …)
+    contexts/       AuthContext.jsx
+    hooks/          usePageTitle.js
+    pages/          PascalCase (Feed.jsx, Questions.jsx, …)
+    services/       api.js
+    styles/         index.css
+    utils/          mediaUrl.js
   server/
-    db/
-      setup_step_a.sql   ← run once in Supabase
-      features.js        streaks / notifications helpers
-      supabase.js
-      verifyStepA.js
-    routes/              real Supabase routes
-    index.js
+    db/migrations/  001_setup_step_a.sql, …
+    db/             helpers.js, supabase.js, verifySchema.js
+    middleware/     auth.js, rateLimit.js
+    routes/         posts.js, users.js, …
+    scripts/        smoke.js, testEmail.js
+    utils/          email.js, storage.js, validate.js
+  docs/             deploy.md, naming conventions, guides
   start.bat
-  STEP_A_SUPABASE.md
 ```
+
+Naming: [`docs/naming-conventions.md`](docs/naming-conventions.md)
 
 ---
 
@@ -136,10 +144,10 @@ nexora-clean/
 | Problem | Fix |
 |---------|-----|
 | Still DEMO MODE | Real keys + `DEMO_MODE=false` + restart |
-| `relation "users" does not exist` | Run `setup_step_a.sql` |
-| `column "gender" does not exist` | Re-run full `setup_step_a.sql` |
+| `relation "users" does not exist` | Run `migrations/001_setup_step_a.sql` |
+| `column "gender" does not exist` | Re-run full `001_setup_step_a.sql` |
 | Invalid API key | Use **service_role**, not anon |
 | CORS errors | Set `CLIENT_URL` to your frontend origin |
 | Upload fails | Ensure `server/uploads` is writable |
 
-Full Supabase guide: [`server/SUPABASE_SETUP.md`](server/SUPABASE_SETUP.md) · [`STEP_A_SUPABASE.md`](STEP_A_SUPABASE.md)
+Guides: [`docs/supabase-setup.md`](docs/supabase-setup.md) · [`docs/step-a-supabase.md`](docs/step-a-supabase.md) · [`docs/deploy.md`](docs/deploy.md)

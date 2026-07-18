@@ -6,19 +6,17 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
+    "lint": "oxlint src",
+    "preview": "vite preview",
+    "check": "npm run lint && npm run build"
   },
   "dependencies": {
-    "@radix-ui/react-dialog": "^1.1.18",
     "axios": "^1.18.1",
     "date-fns": "^4.4.0",
-    "i18next": "^26.3.4",
     "lucide-react": "^1.23.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hot-toast": "^2.6.0",
-    "react-i18next": "^17.0.8",
     "react-router-dom": "^7.18.1"
   },
   "devDependencies": {

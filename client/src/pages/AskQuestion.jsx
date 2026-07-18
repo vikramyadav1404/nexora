@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, Send, Tag, HelpCircle, AlertCircle, Sparkles } from 'lucide-react';
 
 export default function AskQuestion() {

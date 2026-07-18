@@ -12,13 +12,13 @@
   "categories": ["social", "education"],
   "icons": [
     {
-      "src": "/nexora-icon.svg",
+      "src": "/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "/nexora-icon.svg",
+      "src": "/favicon.svg",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "maskable"

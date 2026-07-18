@@ -1,8 +1,30 @@
 import { useState, useEffect } from 'react';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
-import { Check, Clock, CreditCard, Zap, Star, Shield, AlertTriangle, ChevronRight, Receipt } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { Check, Zap, Shield, AlertTriangle, Receipt } from 'lucide-react';
+
+function loadRazorpayScript() {
+  return new Promise((resolve, reject) => {
+    if (window.Razorpay) {
+      resolve();
+      return;
+    }
+    const existing = document.querySelector('script[data-nexora-razorpay]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('Razorpay failed to load')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.async = true;
+    script.dataset.nexoraRazorpay = '1';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Razorpay failed to load'));
+    document.body.appendChild(script);
+  });
+}
 
 const PLANS = [
   {
@@ -31,28 +53,12 @@ const PLANS = [
 export default function Subscriptions() {
   const { user, refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [windowOpen, setWindowOpen] = useState(true);
-  const [currentIST, setCurrentIST] = useState('');
   const [transactions, setTransactions] = useState([]);
   const [tab, setTab] = useState('plans');
 
   useEffect(() => {
-    checkWindow();
     fetchHistory();
-    const interval = setInterval(checkWindow, 30000);
-    return () => clearInterval(interval);
   }, []);
-
-  const checkWindow = async () => {
-    try {
-      const res = await axios.get('/api/subscriptions/plans');
-      setWindowOpen(res.data.windowOpen);
-      // Compute current IST time
-      const now = new Date();
-      const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
-      setCurrentIST(ist.toUTCString().split(' ')[4] + ' IST');
-    } catch {}
-  };
 
   const fetchHistory = async () => {
     try {
@@ -88,7 +94,8 @@ export default function Subscriptions() {
         return;
       }
 
-      // Real Razorpay checkout
+      // Real Razorpay checkout (script loaded on demand)
+      await loadRazorpayScript();
       const options = {
         key: keyId,
         amount,

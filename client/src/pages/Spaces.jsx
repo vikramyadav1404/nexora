@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import { Layers } from 'lucide-react';
 
 export default function Spaces() {

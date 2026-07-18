@@ -195,7 +195,7 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
     console.error('create post:', err.message);
     if (err.message?.includes('column') || err.code === 'PGRST204') {
       return res.status(503).json({
-        message: 'Database schema incomplete. Run server/db/setup_step_a.sql in Supabase.'
+        message: 'Database schema incomplete. Run server/db/migrations/001_setup_step_a.sql in Supabase.'
       });
     }
     res.status(500).json({ message: err.message });
@@ -245,7 +245,7 @@ router.post('/:id/like', protect, async (req, res) => {
 // POST /api/posts/:id/comment
 router.post('/:id/comment', protect, async (req, res) => {
   try {
-    const { content } = req.body;
+    const content = sanitizeText(req.body.content, 2000);
     if (!content) return res.status(400).json({ message: 'Comment cannot be empty' });
 
     const db = getSupabase();

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import axios from '../api';
+import axios from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -88,6 +88,13 @@ export const AuthProvider = ({ children }) => {
     delete axios.defaults.headers.common['Authorization'];
   }, []);
 
+  // Sync logout when API interceptor clears a dead JWT
+  useEffect(() => {
+    const onForcedLogout = () => logout();
+    window.addEventListener('nexora:logout', onForcedLogout);
+    return () => window.removeEventListener('nexora:logout', onForcedLogout);
+  }, [logout]);
+
   const updateUser = useCallback((updates) => {
     setUser(prev => (prev ? { ...prev, ...updates } : prev));
   }, []);
@@ -97,8 +104,11 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await axios.get('/api/auth/me');
       setUser(res.data.user);
-    } catch {
-      /* keep existing user on transient errors */
+    } catch (err) {
+      // Only clear session on hard auth failure; keep user on network blips
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        logout();
+      }
     }
   };
 

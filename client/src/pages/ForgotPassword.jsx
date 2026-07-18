@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { Mail, Phone, RefreshCw, Key, ArrowLeft, Copy, Check } from 'lucide-react';
 

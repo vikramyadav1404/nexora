@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import axios from '../api';
+import { useAuth } from '../contexts/AuthContext';
+import axios from '../services/api';
 import {
   Home, HelpCircle, CreditCard, Trophy, Settings, LogOut,
-  User, Menu, X, Search, Bell, Layers, Bookmark, Target, Star
+  Menu, X, Search, Bell, Layers, Bookmark, Target, Star
 } from 'lucide-react';
 import { TRANSLATIONS } from '../i18n/translations';
 
@@ -42,9 +42,9 @@ export default function Navbar() {
   const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
 
   return (
-    <nav className="navbar">
-      <NavLink to="/feed" className="navbar-brand" title="Nexora">
-        <span className="brand-text">n</span>
+    <nav className="navbar" aria-label="Primary">
+      <NavLink to="/feed" className="navbar-brand" title="Nexora" aria-label="Nexora home">
+        <span className="brand-text" aria-hidden="true">n</span>
       </NavLink>
 
       <div className="navbar-search">

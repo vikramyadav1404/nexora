@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import axios from '../api';
+import { useCallback, useEffect, useState } from 'react';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
 import { Shield, RefreshCw } from 'lucide-react';
 
@@ -11,12 +11,10 @@ export default function Admin() {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('open');
+  const isAdmin = user?.role === 'admin';
 
-  if (user?.role !== 'admin') {
-    return <Navigate to="/feed" replace />;
-  }
-
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!isAdmin) return;
     setLoading(true);
     try {
       const [s, r] = await Promise.all([
@@ -30,9 +28,15 @@ export default function Admin() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [isAdmin, statusFilter]);
 
-  useEffect(() => { load(); }, [statusFilter]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (!isAdmin) {
+    return <Navigate to="/feed" replace />;
+  }
 
   const setReportStatus = async (id, status) => {
     try {
@@ -48,15 +52,15 @@ export default function Admin() {
     <div className="page-container" style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <h1 style={{ fontSize: 24, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Shield size={22} color="#0866FF" /> Admin
+          <Shield size={22} color="#0866FF" aria-hidden="true" /> Admin
         </h1>
         <button type="button" className="btn btn-secondary btn-sm" onClick={load}>
-          <RefreshCw size={14} /> Refresh
+          <RefreshCw size={14} aria-hidden="true" /> Refresh
         </button>
       </div>
 
       {loading && !stats ? (
-        <div className="spinner spinner-lg" style={{ margin: '40px auto' }} />
+        <div className="spinner spinner-lg" style={{ margin: '40px auto' }} role="status" aria-label="Loading" />
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(120px,1fr))', gap: 12, marginBottom: 24 }}>
@@ -69,13 +73,14 @@ export default function Admin() {
           </div>
 
           <div className="glass-card" style={{ padding: 20 }}>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }} role="tablist" aria-label="Report status">
               {['open', 'reviewing', 'resolved', 'dismissed', 'all'].map(s => (
                 <button
                   key={s}
                   type="button"
                   className={`btn btn-sm ${statusFilter === s ? 'btn-primary' : 'btn-secondary'}`}
                   onClick={() => setStatusFilter(s)}
+                  aria-selected={statusFilter === s}
                 >
                   {s}
                 </button>

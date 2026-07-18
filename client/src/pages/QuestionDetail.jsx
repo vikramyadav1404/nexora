@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, ChevronUp, ChevronDown, CheckCircle, Send, Trash2, Award, Eye } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 

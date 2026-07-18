@@ -2,27 +2,46 @@ const jwt = require('jsonwebtoken');
 const { getSupabase } = require('../db/supabase');
 const { shapeUser } = require('../db/helpers');
 
+/**
+ * JWT auth middleware.
+ * Sets `req.user` (API shape) and `req.userRow` (raw DB row).
+ */
 const protect = async (req, res, next) => {
-  let token;
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
-    token = req.headers.authorization.split(' ')[1];
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+  if (!token) {
+    return res.status(401).json({ message: 'Not authorized, no token' });
   }
-  if (!token) return res.status(401).json({ message: 'Not authorized, no token' });
+
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    console.error('JWT_SECRET is not configured');
+    return res.status(500).json({ message: 'Server auth misconfigured' });
+  }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, secret);
+    if (!decoded?.id) {
+      return res.status(401).json({ message: 'Token invalid or expired' });
+    }
+
     const { data: row, error } = await getSupabase()
       .from('users')
       .select('*')
       .eq('id', decoded.id)
       .single();
 
-    if (error || !row) return res.status(401).json({ message: 'User not found' });
+    if (error || !row) {
+      return res.status(401).json({ message: 'User not found' });
+    }
+    if (row.is_active === false) {
+      return res.status(403).json({ message: 'This account has been deactivated' });
+    }
 
     req.user = shapeUser(row);
-    req.userRow = row; // raw DB row for updates
+    req.userRow = row;
     next();
-  } catch (error) {
+  } catch {
     return res.status(401).json({ message: 'Token invalid or expired' });
   }
 };

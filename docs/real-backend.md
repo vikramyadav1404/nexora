@@ -37,7 +37,7 @@ You must complete these steps on **your** machine (we cannot create your Supabas
 ### 1) SQL
 Supabase → SQL Editor → run entire file:
 
-`server/db/setup_step_a.sql`
+`server/db/migrations/001_setup_step_a.sql`
 
 ### 2) `server/.env`
 

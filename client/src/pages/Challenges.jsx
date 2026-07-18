@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import { Flame, Trophy, Target } from 'lucide-react';
 
 export default function Challenges() {

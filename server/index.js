@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const compression = require('compression');
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
@@ -11,7 +12,10 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Ensure upload dirs exist
+// Behind Render/Vercel/nginx — correct IPs for rate limits
+app.set('trust proxy', 1);
+
+// Ensure upload dirs exist (local/dev; cloud uses Supabase Storage)
 ['uploads', 'uploads/posts', 'uploads/avatars'].forEach((dir) => {
   const full = path.join(__dirname, dir);
   if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
@@ -22,6 +26,8 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
   contentSecurityPolicy: false
 }));
+
+app.use(compression());
 
 // CORS — allow client origin(s)
 const clientOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
@@ -37,21 +43,28 @@ app.use(cors({
     if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       return cb(null, true);
     }
+    // Allow any vercel.app preview/production host for this project
+    if (/\.vercel\.app$/i.test(origin || '')) {
+      return cb(null, true);
+    }
     return cb(null, false);
   },
   credentials: true
 }));
 
 app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
+  etag: true
+}));
 app.use('/api', apiLimiter);
 
 const appVersion = require('./version');
 app.get('/api/version', (req, res) => {
   res.json({
     ...appVersion,
-    demoMode: null, // filled in health after boot mode is known
+    demoMode: null,
     env: process.env.NODE_ENV || 'development'
   });
 });
@@ -93,33 +106,47 @@ async function checkSupabaseTables(db, tables = CORE_TABLES) {
   return status;
 }
 
-function mountRealRoutes(app) {
-  app.use('/api/auth', require('./routes/auth'));
-  app.use('/api/posts', require('./routes/posts'));
-  app.use('/api/questions', require('./routes/questions'));
-  app.use('/api/answers', require('./routes/answers'));
-  app.use('/api/subscriptions', require('./routes/subscriptions'));
-  app.use('/api/rewards', require('./routes/rewards'));
-  app.use('/api/users', require('./routes/users'));
-  app.use('/api/notifications', require('./routes/notifications'));
-  app.use('/api/bookmarks', require('./routes/bookmarks'));
-  app.use('/api/search', require('./routes/search'));
-  app.use('/api/spaces', require('./routes/spaces'));
-  app.use('/api/challenges', require('./routes/challenges'));
-  app.use('/api/ai', require('./routes/ai'));
-  app.use('/api/digests', require('./routes/digests'));
-  // blocks + reports (paths: /api/blocks, /api/reports)
-  app.use('/api', require('./routes/safety'));
-  app.use('/api/admin', require('./routes/admin'));
+function mountRealRoutes(appInstance) {
+  appInstance.use('/api/auth', require('./routes/auth'));
+  appInstance.use('/api/posts', require('./routes/posts'));
+  appInstance.use('/api/questions', require('./routes/questions'));
+  appInstance.use('/api/answers', require('./routes/answers'));
+  appInstance.use('/api/subscriptions', require('./routes/subscriptions'));
+  appInstance.use('/api/rewards', require('./routes/rewards'));
+  appInstance.use('/api/users', require('./routes/users'));
+  appInstance.use('/api/notifications', require('./routes/notifications'));
+  appInstance.use('/api/bookmarks', require('./routes/bookmarks'));
+  appInstance.use('/api/search', require('./routes/search'));
+  appInstance.use('/api/spaces', require('./routes/spaces'));
+  appInstance.use('/api/challenges', require('./routes/challenges'));
+  appInstance.use('/api/ai', require('./routes/ai'));
+  appInstance.use('/api/digests', require('./routes/digests'));
+  appInstance.use('/api', require('./routes/safety'));
+  appInstance.use('/api/admin', require('./routes/admin'));
 }
 
-async function startServer() {
+let bootPromise = null;
+
+/**
+ * Initialize routes once (local listen or serverless).
+ * @param {{ listen?: boolean }} opts
+ */
+async function startServer(opts = {}) {
+  const shouldListen = opts.listen !== false;
+
   process.on('uncaughtException', (err) => {
     console.error('uncaughtException:', err.message);
   });
   process.on('unhandledRejection', (err) => {
     console.error('unhandledRejection:', err?.message || err);
   });
+
+  if (!process.env.PUBLIC_API_URL && process.env.RENDER_EXTERNAL_URL) {
+    process.env.PUBLIC_API_URL = process.env.RENDER_EXTERNAL_URL;
+  }
+  if (!process.env.PUBLIC_API_URL && process.env.VERCEL_URL) {
+    process.env.PUBLIC_API_URL = `https://${process.env.VERCEL_URL}`;
+  }
 
   const demoMode = shouldUseDemoMode();
 
@@ -138,6 +165,7 @@ async function startServer() {
         hint: 'Set real SUPABASE_* keys and DEMO_MODE=false for production backend'
       })
     );
+    app.get('/api/ready', (req, res) => res.json({ ready: true, demo: true, version: appVersion.version }));
 
     app.use('/api', require('./routes/demo'));
 
@@ -146,20 +174,15 @@ async function startServer() {
       res.status(500).json({ message: err.message || 'Server error' });
     });
 
-    app.listen(PORT, () => {
-      console.log('');
-      console.log('🚀 Nexora server  http://localhost:' + PORT);
-      console.log('🧪 DEMO MODE (in-memory) — temporary until Supabase is configured');
-      console.log('   demo@nexora.com / demo1234');
-      console.log('');
-      console.log('📘 Real backend setup:');
-      console.log('   1) Run server/db/setup_step_a.sql in Supabase SQL Editor');
-      console.log('   2) Put real keys in server/.env');
-      console.log('   3) DEMO_MODE=false');
-      console.log('   4) npm run verify:supabase');
-      console.log('');
-    });
-    return;
+    if (shouldListen) {
+      app.listen(PORT, () => {
+        console.log('');
+        console.log('🚀 Nexora server  http://localhost:' + PORT);
+        console.log('🧪 DEMO MODE (in-memory)');
+        console.log('');
+      });
+    }
+    return app;
   }
 
   // ── Production: Supabase Postgres ──
@@ -172,14 +195,28 @@ async function startServer() {
     if (missing.length) {
       console.error('❌ Required tables missing or inaccessible:');
       missing.forEach(([t, v]) => console.error(`   - ${t}: ${v.error}`));
-      console.error('   Run server/db/setup_step_a.sql in Supabase SQL Editor, then restart.\n');
-      process.exit(1);
+      if (shouldListen) {
+        console.error('   Run server/db/migrations/001_setup_step_a.sql, then restart.\n');
+        process.exit(1);
+      }
+      app.get('/api/health', (req, res) =>
+        res.status(503).json({ status: 'ERROR', message: 'Missing tables', missing })
+      );
+      app.get('/api/ready', (req, res) => res.status(503).json({ ready: false }));
+      return app;
     }
     console.log('✅ Connected to Supabase Postgres (all tables OK)');
   } catch (err) {
     console.error('❌ Supabase setup error:', err.message);
-    console.error('   Fix server/.env SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
-    process.exit(1);
+    if (shouldListen) {
+      console.error('   Fix server/.env SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
+      process.exit(1);
+    }
+    app.get('/api/health', (req, res) =>
+      res.status(503).json({ status: 'ERROR', message: err.message })
+    );
+    app.get('/api/ready', (req, res) => res.status(503).json({ ready: false, error: err.message }));
+    return app;
   }
 
   app.get('/api/health', async (req, res) => {
@@ -204,7 +241,6 @@ async function startServer() {
     }
   });
 
-  // Lightweight readiness for uptime monitors (no table scan)
   app.get('/api/ready', async (req, res) => {
     try {
       const { error } = await getSupabase().from('users').select('id', { head: true, count: 'exact' }).limit(1);
@@ -217,26 +253,46 @@ async function startServer() {
 
   mountRealRoutes(app);
 
-  // 404 for unknown API paths
   app.use('/api', (req, res) => {
     res.status(404).json({ message: `API route not found: ${req.method} ${req.originalUrl}` });
   });
 
   app.use((err, req, res, next) => {
-    console.error('API error:', err.message);
-    res.status(err.status || 500).json({ message: err.message || 'Server error' });
+    const status = err.status || err.statusCode || 500;
+    if (status >= 500) console.error('API error:', err.message);
+    else console.warn('API client error:', err.message);
+    res.status(status).json({
+      message: err.message || 'Server error',
+      ...(process.env.NODE_ENV !== 'production' && err.stack ? { stack: err.stack } : {})
+    });
   });
 
-  app.listen(PORT, () => {
-    console.log('');
-    console.log('🚀 Nexora server  http://localhost:' + PORT);
-    console.log('🗄️  Database:     Supabase Postgres (real backend)');
-    console.log('🔑 Health:        http://localhost:' + PORT + '/api/health');
-    console.log('🌐 Frontend:      ' + (process.env.CLIENT_URL || 'http://localhost:5173'));
-    console.log('');
-    console.log('   Register a NEW user — data persists in Supabase Table Editor → users');
-    console.log('');
-  });
+  if (shouldListen) {
+    app.listen(PORT, () => {
+      console.log('');
+      console.log('🚀 Nexora server  http://localhost:' + PORT);
+      console.log('🗄️  Database:     Supabase Postgres (real backend)');
+      console.log('🔑 Health:        http://localhost:' + PORT + '/api/health');
+      console.log('🌐 Frontend:      ' + (process.env.CLIENT_URL || 'http://localhost:5173'));
+      console.log('');
+    });
+  }
+
+  return app;
 }
 
-startServer();
+function getApp() {
+  if (!bootPromise) bootPromise = startServer({ listen: false });
+  return bootPromise;
+}
+
+// Local / Render / Railway: node index.js
+if (require.main === module) {
+  startServer({ listen: true });
+}
+
+// Vercel serverless: export handler
+module.exports = async (req, res) => {
+  const readyApp = await getApp();
+  return readyApp(req, res);
+};

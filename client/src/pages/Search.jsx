@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import { Search as SearchIcon, Users, FileText, HelpCircle, Layers } from 'lucide-react';
 
 export default function SearchPage() {

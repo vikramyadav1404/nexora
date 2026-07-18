@@ -8,12 +8,13 @@
     "install-all": "cd server && npm install && cd ../client && npm install",
     "dev": "concurrently \"npm run server\" \"npm run client\"",
     "verify:supabase": "cd server && npm run verify:supabase",
-    "build:client": "cd client && npm run build"
+    "build:client": "cd client && npm run build",
+    "build": "cd client && npm run build",
+    "lint": "cd client && npm run lint",
+    "smoke": "cd server && npm run smoke",
+    "check": "npm run lint && npm run build && npm run smoke"
   },
   "devDependencies": {
     "concurrently": "^10.0.3"
-  },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.110.2"
   }
 }

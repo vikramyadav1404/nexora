@@ -10,7 +10,7 @@ Nexora keeps **Express + JWT + Razorpay** and uses **Supabase Postgres** as the 
 ## 2. Run the SQL schema
 
 1. Open **SQL Editor** → New query  
-2. Paste the full contents of **`server/db/setup_step_a.sql`**  
+2. Paste the full contents of **`server/db/migrations/001_setup_step_a.sql`**  
 3. Run it  
 
 Includes: auth, posts, Q&A, friends, follows, transactions, notifications, bookmarks, blocks, reports.

@@ -136,7 +136,7 @@ CLIENT_URL=https://nexora-xxx.vercel.app
    - `avatars` (public)
    - `posts` (public)
 2. Or run once after deploy with service_role; code can create buckets when `USE_SUPABASE_STORAGE=true`.
-3. Optional SQL: `server/db/migration_production.sql`
+3. Optional SQL: `server/db/migrations/004_production.sql`
 
 ---
 

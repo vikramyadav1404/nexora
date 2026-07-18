@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import toast from 'react-hot-toast';
-import { useAuth } from '../context/AuthContext';
+import { useAuth } from '../contexts/AuthContext';
 import {
   Image, Send, ThumbsUp, MessageCircle, Share2, Trash2, Users, X,
   ChevronDown, Home, HelpCircle, CreditCard, Trophy, Settings, User,
@@ -10,13 +10,21 @@ import {
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { TRANSLATIONS } from '../i18n/translations';
+import { mediaUrl } from '../utils/mediaUrl';
+
+function postIdOf(post) {
+  return post?._id || post?.id;
+}
 
 function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onProfile }) {
   const [showComments, setShowComments] = useState(false);
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const isLiked = post.likes?.includes(currentUser?._id || currentUser?.id);
-  const isOwn = post.author?._id === (currentUser?._id || currentUser?.id);
+  const uid = currentUser?._id || currentUser?.id;
+  const authorId = post.author?._id || post.author?.id;
+  const pid = postIdOf(post);
+  const isLiked = post.likes?.includes(uid);
+  const isOwn = authorId && authorId === uid;
   const likeCount = post.likes?.length || 0;
   const commentCount = post.comments?.length || 0;
 
@@ -24,7 +32,7 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
     if (!comment.trim()) return;
     setSubmitting(true);
     try {
-      await onComment(post._id, comment);
+      await onComment(pid, comment);
       setComment('');
     } finally {
       setSubmitting(false);
@@ -37,16 +45,19 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
     <div className="post-card animate-fadeIn">
       <div className="post-header">
         <div
-          onClick={() => post.author?._id && onProfile(post.author._id)}
+          onClick={() => authorId && onProfile(authorId)}
           style={{ cursor: 'pointer' }}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => { if (e.key === 'Enter') authorId && onProfile(authorId); }}
         >
           {post.author?.avatar
-            ? <img src={post.author.avatar} className="avatar" alt="" />
+            ? <img src={mediaUrl(post.author.avatar)} className="avatar" alt="" />
             : <div className="avatar-placeholder">{authorInitial}</div>
           }
         </div>
         <div className="post-author-info" style={{ flex: 1 }}>
-          <h4 onClick={() => post.author?._id && onProfile(post.author._id)}>
+          <h4 onClick={() => authorId && onProfile(authorId)} style={{ cursor: authorId ? 'pointer' : 'default' }}>
             {post.author?.name}
           </h4>
           <span>
@@ -60,7 +71,7 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
           <button
             type="button"
             className="btn btn-icon btn-sm"
-            onClick={() => onDelete(post._id)}
+            onClick={() => onDelete(pid)}
             title="Delete post"
             style={{ color: 'var(--text-faint)' }}
           >
@@ -75,8 +86,8 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
         <div className="post-media">
           {post.media.map((m, i) => (
             m.type === 'image'
-              ? <img key={i} src={m.url} alt="Post media" />
-              : <video key={i} src={m.url} controls />
+              ? <img key={i} src={mediaUrl(m.url)} alt="Post media" />
+              : <video key={i} src={mediaUrl(m.url)} controls />
           ))}
         </div>
       )}
@@ -111,7 +122,7 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
       )}
 
       <div className="post-actions" style={{ borderTop: '1px solid var(--border-soft)' }}>
-        <button type="button" className={`action-btn ${isLiked ? 'liked' : ''}`} onClick={() => onLike(post._id)}>
+        <button type="button" className={`action-btn ${isLiked ? 'liked' : ''}`} onClick={() => onLike(pid)}>
           <ThumbsUp size={18} fill={isLiked ? 'currentColor' : 'none'} />
           Like
         </button>
@@ -119,7 +130,7 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
           <MessageCircle size={18} />
           Comment
         </button>
-        <button type="button" className="action-btn" onClick={() => onShare(post._id)}>
+        <button type="button" className="action-btn" onClick={() => onShare(pid)}>
           <Share2 size={18} />
           Share
         </button>
@@ -128,7 +139,7 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
           className="action-btn"
           onClick={async () => {
             try {
-              await axios.post('/api/bookmarks', { type: 'post', id: post._id || post.id });
+              await axios.post('/api/bookmarks', { type: 'post', id: pid });
               toast.success('Saved');
             } catch {
               toast.error('Could not save');
@@ -274,7 +285,7 @@ export default function Feed() {
     try {
       const res = await axios.post(`/api/posts/${postId}/like`);
       setPosts(prev => prev.map(p => {
-        if (p._id !== postId) return p;
+        if (postIdOf(p) !== postId) return p;
         const uid = user?._id || user?.id;
         return {
           ...p,
@@ -289,14 +300,14 @@ export default function Feed() {
   const handleComment = async (postId, content) => {
     try {
       const res = await axios.post(`/api/posts/${postId}/comment`, { content });
-      setPosts(prev => prev.map(p => p._id === postId ? { ...p, comments: res.data.comments } : p));
+      setPosts(prev => prev.map(p => (postIdOf(p) === postId ? { ...p, comments: res.data.comments } : p)));
     } catch { toast.error('Failed to comment'); }
   };
 
   const handleShare = async (postId) => {
     try {
       const res = await axios.post(`/api/posts/${postId}/share`);
-      setPosts(prev => prev.map(p => p._id === postId ? { ...p, shares: res.data.shares } : p));
+      setPosts(prev => prev.map(p => (postIdOf(p) === postId ? { ...p, shares: res.data.shares } : p)));
       toast.success('Post shared');
     } catch { toast.error('Failed to share'); }
   };
@@ -305,7 +316,7 @@ export default function Feed() {
     if (!confirm('Delete this post?')) return;
     try {
       await axios.delete(`/api/posts/${postId}`);
-      setPosts(prev => prev.filter(p => p._id !== postId));
+      setPosts(prev => prev.filter(p => postIdOf(p) !== postId));
       toast.success('Post deleted');
     } catch { toast.error('Failed to delete'); }
   };
@@ -331,7 +342,7 @@ export default function Feed() {
         <aside className="sidebar-left">
           <button type="button" className="fb-side-link" onClick={() => navigate(`/profile/${userId}`)}>
             {user?.avatar
-              ? <img src={user.avatar} className="avatar" style={{ width: 36, height: 36 }} alt="" />
+              ? <img src={mediaUrl(user.avatar)} className="avatar" style={{ width: 36, height: 36 }} alt="" />
               : <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>{initials}</div>
             }
             <span style={{ fontWeight: 600 }}>{user?.name}</span>
@@ -410,7 +421,7 @@ export default function Feed() {
               <>
                 <div className="fb-composer-top">
                   {user?.avatar
-                    ? <img src={user.avatar} className="avatar" alt="" />
+                    ? <img src={mediaUrl(user.avatar)} className="avatar" alt="" />
                     : <div className="avatar-placeholder">{initials}</div>
                   }
                   {composerOpen ? (
@@ -533,7 +544,7 @@ export default function Feed() {
             <>
               {posts.map(post => (
                 <PostCard
-                  key={post._id}
+                  key={postIdOf(post)}
                   post={post}
                   currentUser={user}
                   onLike={handleLike}
@@ -573,7 +584,7 @@ export default function Feed() {
                       style={{ cursor: 'pointer' }}
                     >
                       {s.avatar
-                        ? <img src={s.avatar} className="avatar" style={{ width: 36, height: 36 }} alt="" />
+                        ? <img src={mediaUrl(s.avatar)} className="avatar" style={{ width: 36, height: 36 }} alt="" />
                         : (
                           <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>
                             {s.name?.[0]?.toUpperCase() || 'U'}

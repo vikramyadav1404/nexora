@@ -15,12 +15,12 @@
 | Cloud storage hook | `USE_SUPABASE_STORAGE=true` + `utils/storage.js` |
 | Health | `/api/health` extras + `/api/ready` for uptime |
 | Legal | `/terms`, `/privacy` |
-| SQL extras | `server/db/migration_production.sql` |
+| SQL extras | `server/db/migrations/004_production.sql` |
 
 ## You still configure in the real world
 
 1. **Run SQL** (optional but recommended)  
-   Supabase SQL Editor → paste `server/db/migration_production.sql` → Run
+   Supabase SQL Editor → paste `server/db/migrations/004_production.sql` → Run
 
 2. **Real email** in `server/.env`  
    ```env

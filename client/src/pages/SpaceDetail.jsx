@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import axios from '../api';
+import axios from '../services/api';
 import { ArrowLeft } from 'lucide-react';
 
 export default function SpaceDetail() {

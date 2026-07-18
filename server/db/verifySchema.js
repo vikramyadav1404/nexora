@@ -67,7 +67,7 @@ async function main() {
   }
 
   if (failed) {
-    console.error('\n❌ Missing tables. Run server/db/setup_step_a.sql in Supabase SQL Editor.\n');
+    console.error('\n❌ Missing tables. Run server/db/migrations/001_setup_step_a.sql in Supabase SQL Editor.\n');
     process.exit(1);
   }
 
