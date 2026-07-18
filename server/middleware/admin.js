@@ -1,6 +1,6 @@
 const { protect } = require('./auth');
 
-/** Require authenticated admin role */
+// same as protect, but role has to be admin
 function requireAdmin(req, res, next) {
   protect(req, res, () => {
     const role = req.userRow?.role || req.user?.role || 'user';

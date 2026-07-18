@@ -1,12 +1,9 @@
 const bcrypt = require('bcryptjs');
 
-/** Public author fields for embeds */
+// fields we usually join onto posts/comments
 const AUTHOR_FIELDS = 'id, name, avatar, points, badges, subscription_plan, subscription_expires_at';
 
-/**
- * Make relative upload paths absolute when PUBLIC_API_URL / API is known.
- * Leaves http(s) and empty values unchanged (Supabase Storage URLs stay as-is).
- */
+// /uploads/... needs a full host when frontend and API are on different domains
 function publicAssetUrl(url) {
   if (!url || typeof url !== 'string') return '';
   if (/^https?:\/\//i.test(url) || url.startsWith('data:')) return url;
@@ -16,7 +13,7 @@ function publicAssetUrl(url) {
     process.env.RENDER_EXTERNAL_URL ||
     ''
   ).replace(/\/$/, '');
-  if (base && url.startsWith('/')) return `${base}${url}`;
+  if (base && url.startsWith('/')) return base + url;
   return url;
 }
 
@@ -75,7 +72,7 @@ async function comparePassword(plain, hash) {
   }
 }
 
-/** Map DB user row → API shape expected by the React client */
+// turn a users table row into what the frontend expects
 function shapeUser(row, extras = {}) {
   if (!row) return null;
   const {

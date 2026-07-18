@@ -85,7 +85,7 @@ function shouldUseDemoMode() {
     const url = process.env.SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     if (isPlaceholderConfig(url, key)) {
-      console.warn('⚠️  DEMO_MODE=false but Supabase keys missing/placeholder → using DEMO until keys are set.');
+      console.warn('DEMO_MODE=false but Supabase keys missing/placeholder → using DEMO until keys are set.');
       return true;
     }
     return false;
@@ -182,15 +182,15 @@ async function startServer(opts = {}) {
     if (shouldListen) {
       app.listen(PORT, () => {
         console.log('');
-        console.log('🚀 Nexora server  http://localhost:' + PORT);
-        console.log('🧪 DEMO MODE (in-memory)');
+        console.log('Nexora server  http://localhost:' + PORT);
+        console.log('DEMO MODE (in-memory)');
         console.log('');
       });
     }
     return app;
   }
 
-  // ── Production: Supabase Postgres ──
+  // real db path
   const { getSupabase } = require('./db/supabase');
 
   try {
@@ -204,15 +204,15 @@ async function startServer(opts = {}) {
       const tableStatus = await checkSupabaseTables(db);
       const missing = Object.entries(tableStatus).filter(([, v]) => !v.ok);
       if (missing.length) {
-        console.error('❌ Required tables missing or inaccessible:');
+        console.error('Required tables missing or inaccessible:');
         missing.forEach(([t, v]) => console.error(`   - ${t}: ${v.error}`));
         console.error('   Run server/db/migrations/001_setup_step_a.sql, then restart.\n');
         process.exit(1);
       }
     }
-    console.log('✅ Connected to Supabase Postgres');
+    console.log('Connected to Supabase Postgres');
   } catch (err) {
-    console.error('❌ Supabase setup error:', err.message);
+    console.error('Supabase setup error:', err.message);
     if (shouldListen) {
       console.error('   Fix server/.env SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
       process.exit(1);
@@ -276,10 +276,10 @@ async function startServer(opts = {}) {
   if (shouldListen) {
     app.listen(PORT, () => {
       console.log('');
-      console.log('🚀 Nexora server  http://localhost:' + PORT);
-      console.log('🗄️  Database:     Supabase Postgres (real backend)');
-      console.log('🔑 Health:        http://localhost:' + PORT + '/api/health');
-      console.log('🌐 Frontend:      ' + (process.env.CLIENT_URL || 'http://localhost:5173'));
+      console.log('Nexora server  http://localhost:' + PORT);
+      console.log('Database:     Supabase Postgres (real backend)');
+      console.log('Health:        http://localhost:' + PORT + '/api/health');
+      console.log('Frontend:      ' + (process.env.CLIENT_URL || 'http://localhost:5173'));
       console.log('');
     });
   }

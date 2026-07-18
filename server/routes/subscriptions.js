@@ -47,7 +47,7 @@ router.post('/create-order', protect, async (req, res) => {
       const istDate = new Date(new Date().getTime() + (5.5 * 60 * 60 * 1000));
       const currentHour = istDate.getUTCHours();
       return res.status(403).json({
-        message: `⏰ Payments are only accepted between 10:00 AM - 11:00 AM IST. Current IST time: ${currentHour}:${String(istDate.getUTCMinutes()).padStart(2, '0')}`,
+        message: `Payments are only accepted between 10:00 AM - 11:00 AM IST. Current IST time: ${currentHour}:${String(istDate.getUTCMinutes()).padStart(2, '0')}`,
         windowOpen: false,
         currentIST: istDate.toISOString()
       });

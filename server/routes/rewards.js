@@ -46,13 +46,13 @@ router.post('/transfer', protect, async (req, res) => {
 
     if ((sender.points || 0) <= 10) {
       return res.status(403).json({
-        message: '❌ You need more than 10 points to transfer points. Keep contributing to earn more!'
+        message: 'You need more than 10 points to transfer points. Keep contributing to earn more!'
       });
     }
 
     if (pts > sender.points - 10) {
       return res.status(400).json({
-        message: `❌ You can transfer at most ${sender.points - 10} points (must keep at least 10 for yourself)`
+        message: `You can transfer at most ${sender.points - 10} points (must keep at least 10 for yourself)`
       });
     }
 
@@ -93,7 +93,7 @@ router.post('/transfer', protect, async (req, res) => {
     }).catch(() => {});
 
     res.json({
-      message: `✅ Successfully transferred ${pts} points to ${recipient.name}!`,
+      message: `Successfully transferred ${pts} points to ${recipient.name}!`,
       senderPoints,
       transfer: {
         _id: transfer.id,

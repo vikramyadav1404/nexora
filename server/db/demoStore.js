@@ -264,7 +264,7 @@ async function initDemoStore() {
   demoUser.friends = friendIds;
 
   store.ready = true;
-  console.log('✅ Demo mode ready');
+  console.log('Demo mode ready');
   console.log('   Email:    demo@nexora.com');
   console.log('   Password: demo1234');
   return store;

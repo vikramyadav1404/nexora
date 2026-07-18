@@ -41,13 +41,13 @@ async function main() {
   console.log('\n🔍 Nexora — Supabase verification\n');
 
   if (isPlaceholder(url, key)) {
-    console.error('❌ SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY still placeholders.');
+    console.error('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY still placeholders.');
     console.error('   Edit server/.env with real values from Supabase → Project Settings → API\n');
     process.exit(1);
   }
 
   if (process.env.DEMO_MODE === 'true' || process.env.DEMO_MODE === '1') {
-    console.warn('⚠️  DEMO_MODE=true — set DEMO_MODE=false to use Supabase in the app.\n');
+    console.warn('DEMO_MODE=true — set DEMO_MODE=false to use Supabase in the app.\n');
   }
 
   const db = createClient(url, key, {
@@ -67,7 +67,7 @@ async function main() {
   }
 
   if (failed) {
-    console.error('\n❌ Missing tables. Run server/db/migrations/001_setup_step_a.sql in Supabase SQL Editor.\n');
+    console.error('\nMissing tables. Run server/db/migrations/001_setup_step_a.sql in Supabase SQL Editor.\n');
     process.exit(1);
   }
 
@@ -88,7 +88,7 @@ async function main() {
     .single();
 
   if (cErr) {
-    console.error('\n❌ Auth write failed:', cErr.message);
+    console.error('\nAuth write failed:', cErr.message);
     if (cErr.message?.includes('gender') || cErr.message?.includes('column')) {
       console.error('   Re-run setup_step_a.sql (adds gender/interests/feature columns).');
     }
@@ -102,7 +102,7 @@ async function main() {
     .single();
 
   if (rErr || !found) {
-    console.error('\n❌ Auth read failed:', rErr?.message);
+    console.error('\nAuth read failed:', rErr?.message);
     process.exit(1);
   }
 
@@ -114,7 +114,7 @@ async function main() {
     body: 'smoke test'
   });
   if (nErr) {
-    console.error('\n❌ Notifications write failed:', nErr.message);
+    console.error('\nNotifications write failed:', nErr.message);
     await db.from('users').delete().eq('id', created.id);
     process.exit(1);
   }
@@ -123,7 +123,7 @@ async function main() {
   await db.from('notifications').delete().eq('user_id', created.id);
   await db.from('users').delete().eq('id', created.id);
 
-  console.log('\n✅ Database OK — auth + features read/write work');
+  console.log('\nDatabase OK — auth + features read/write work');
   console.log('   Next: DEMO_MODE=false → npm run dev → register a real user\n');
   process.exit(0);
 }

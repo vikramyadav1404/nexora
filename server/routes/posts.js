@@ -127,7 +127,7 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
     const postLimit = getDailyPostLimit(networkSize);
     if (postLimit === 0) {
       return res.status(403).json({
-        message: '🚫 Follow interest accounts or add friends to post. Finish onboarding or open Spaces → Follow hubs.'
+        message: 'Follow interest accounts or add friends to post. Finish onboarding or open Spaces → Follow hubs.'
       });
     }
 
@@ -135,7 +135,7 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
     if (isToday(req.userRow.last_post_date)) {
       if (postLimit !== Infinity && postsToday >= postLimit) {
         return res.status(429).json({
-          message: `⏰ Daily post limit reached (${postLimit}/day with network size ${networkSize}). Follow more people to unlock more posts.`
+          message: `Daily post limit reached (${postLimit}/day with network size ${networkSize}). Follow more people to unlock more posts.`
         });
       }
     } else {

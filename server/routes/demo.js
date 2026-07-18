@@ -125,7 +125,7 @@ router.post('/auth/generate-password', (req, res) => {
 
 router.post('/auth/forgot-password', async (req, res) => {
   await initDemoStore();
-  res.json({ message: '✅ Demo mode: use password demo1234 for demo@nexora.com', devPassword: 'demo1234' });
+  res.json({ message: 'Demo mode: use password demo1234 for demo@nexora.com', devPassword: 'demo1234' });
 });
 
 router.post('/auth/change-password', protectDemo, async (req, res) => {

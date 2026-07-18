@@ -4,10 +4,9 @@ function isValidEmail(email) {
   return typeof email === 'string' && EMAIL_RE.test(email.trim()) && email.length <= 254;
 }
 
+// not "bank level" — just keep obvious junk out
 function isStrongPassword(password) {
-  if (typeof password !== 'string' || password.length < 6) return false;
-  if (password.length > 128) return false;
-  return true;
+  return typeof password === 'string' && password.length >= 6 && password.length <= 128;
 }
 
 function sanitizeText(value, max = 2000) {
@@ -20,8 +19,10 @@ function sanitizeNamePart(value, max = 60) {
 }
 
 function isValidUuid(id) {
-  return typeof id === 'string' &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+  return (
+    typeof id === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)
+  );
 }
 
 module.exports = {

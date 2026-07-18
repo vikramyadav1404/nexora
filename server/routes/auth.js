@@ -375,7 +375,7 @@ router.post('/forgot-password', authLimiter, sensitiveLimiter, async (req, res) 
       'Nexora - Your New Password',
       `
       <div style="font-family: Arial; max-width: 600px; margin: auto; background: #1a1a2e; color: #fff; padding: 30px; border-radius: 12px;">
-        <h2 style="color: #6c63ff;">🔐 Your New Password</h2>
+        <h2 style="color: #6c63ff;">Your New Password</h2>
         <p>Hi <strong>${user.name}</strong>,</p>
         <p>Here is your new auto-generated password for Nexora:</p>
         <div style="background: #16213e; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0;">
@@ -387,7 +387,7 @@ router.post('/forgot-password', authLimiter, sensitiveLimiter, async (req, res) 
     );
 
     res.json({
-      message: `✅ New password sent to your ${email ? 'email' : 'phone'}. Check your inbox!`,
+      message: `New password sent to your ${email ? 'email' : 'phone'}. Check your inbox!`,
       ...(process.env.NODE_ENV !== 'production' && { devPassword: newPassword })
     });
   } catch (err) {

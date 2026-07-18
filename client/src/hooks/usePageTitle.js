@@ -1,9 +1,6 @@
 import { useEffect } from 'react';
 
-/**
- * Sets document.title for SEO / tab UX.
- * @param {string} title - page title (appended with " · Nexora")
- */
+// small helper so browser tabs don't all say just "Nexora"
 export function usePageTitle(title) {
   useEffect(() => {
     const prev = document.title;

@@ -42,9 +42,9 @@ export default function Register() {
         gender: form.gender
       });
       if (user?._registerMeta?.devEmailOtp) {
-        toast.success(`Verify email OTP (dev): ${user._registerMeta.devEmailOtp}`, { duration: 8000 });
+        toast.success(`Dev OTP: ${user._registerMeta.devEmailOtp}`, { duration: 8000 });
       } else {
-        toast.success(user?._registerMeta?.message || 'Welcome to Nexora — check email to verify');
+        toast.success(user?._registerMeta?.message || 'Account created — check your email');
       }
       navigate(user?.onboardingCompleted ? '/feed' : '/onboarding');
     } catch (err) {

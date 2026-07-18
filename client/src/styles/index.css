@@ -1,8 +1,5 @@
-/* ==========================================
-   NEXORA — Facebook-inspired design system
-   ========================================== */
+/* Nexora styles — FB-ish layout, light/dark tokens */
 
-/* Accessibility helpers */
 .skip-link {
   position: absolute;
   left: -9999px;

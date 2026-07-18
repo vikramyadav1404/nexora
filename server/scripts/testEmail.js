@@ -18,7 +18,7 @@ async function main() {
     'Nexora test email',
     '<p>If you see this, <strong>Step 5 email</strong> works.</p>'
   );
-  console.log(ok ? '✅ Send call finished (check inbox / spam / console mock)' : '❌ Send failed');
+  console.log(ok ? 'Send call finished (check inbox / spam / console mock)' : 'Send failed');
 }
 
 main().catch((e) => {

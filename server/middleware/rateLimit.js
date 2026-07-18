@@ -1,39 +1,39 @@
 const rateLimit = require('express-rate-limit');
 
-/** General API limit */
+// general API traffic
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_API || 400),
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many requests. Please try again later.' }
+  message: { message: 'Too many requests. Try again in a bit.' }
 });
 
-/** Stricter auth (login/register/forgot) */
+// login / register / forgot
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_AUTH || 30),
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many auth attempts. Wait 15 minutes and try again.' }
+  message: { message: 'Too many login attempts. Wait 15 minutes.' }
 });
 
-/** Password / email OTP actions */
+// otp, password change, delete account
 const sensitiveLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_SENSITIVE || 10),
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'Too many sensitive requests. Try again in an hour.' }
+  message: { message: 'Too many attempts. Try again later.' }
 });
 
-/** Report / post creation soft limit */
+// posts / reports spam guard
 const writeLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: Number(process.env.RATE_LIMIT_WRITE || 30),
   standardHeaders: true,
   legacyHeaders: false,
-  message: { message: 'You are posting too quickly. Slow down a bit.' }
+  message: { message: 'Slow down a little.' }
 });
 
 module.exports = { apiLimiter, authLimiter, sensitiveLimiter, writeLimiter };

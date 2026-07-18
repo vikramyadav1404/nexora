@@ -88,7 +88,7 @@ export default function Subscriptions() {
           plan: planId,
           isMock: true
         });
-        toast.success(`🎉 Subscribed to ${planId.toUpperCase()} plan! (Demo mode)`);
+        toast.success(`You're on ${planId} now (demo payment)`);
         refreshUser();
         fetchHistory();
         return;
@@ -112,7 +112,7 @@ export default function Subscriptions() {
               transactionId,
               plan: planId
             });
-            toast.success('🎉 Payment successful! Subscription activated.');
+            toast.success('Payment went through — plan is active');
             refreshUser();
             fetchHistory();
           } catch { toast.error('Payment verification failed'); }

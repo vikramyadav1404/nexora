@@ -1,18 +1,13 @@
 import { baseURL } from '../services/api';
 
-/**
- * Resolve avatar/media URLs for local /uploads paths when API is on another origin.
- * Supabase / absolute URLs pass through unchanged.
- * @param {string} [url]
- * @returns {string}
- */
+// local uploads are paths like /uploads/... — prefix them when API lives on another host
 export function mediaUrl(url) {
   if (!url) return '';
   if (/^https?:\/\//i.test(url) || url.startsWith('data:') || url.startsWith('blob:')) {
     return url;
   }
   if (url.startsWith('/') && baseURL) {
-    return `${baseURL.replace(/\/$/, '')}${url}`;
+    return baseURL.replace(/\/$/, '') + url;
   }
   return url;
 }

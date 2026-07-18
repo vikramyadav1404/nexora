@@ -74,8 +74,8 @@ export default function Onboarding() {
       const followed = res.data.seed?.creatorsFollowed || 0;
       toast.success(
         followed
-          ? `You're in! Following ${followed} interest accounts.`
-          : 'Preferences saved — your feed is ready!'
+          ? `Nice — following ${followed} interest accounts`
+          : 'Saved. Your feed should feel more relevant now'
       );
       navigate('/feed', { replace: true });
     } catch (err) {

@@ -5,12 +5,11 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Navbar from './components/Navbar';
 import MobileNav from './components/MobileNav';
 
-// Eager: critical path
+// login flow loads first; everything else can wait
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 
-// Lazy: code-split secondary routes
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Feed = lazy(() => import('./pages/Feed'));
@@ -55,12 +54,11 @@ const PAGE_TITLES = {
 
 function RouteFallback() {
   return (
-    <div className="loading-screen" role="status" aria-live="polite" aria-busy="true">
+    <div className="loading-screen" role="status" aria-live="polite">
       <div className="loading-logo">
         nexora<span />
       </div>
-      <div className="spinner spinner-lg" aria-hidden="true" />
-      <span className="sr-only">Loading page…</span>
+      <div className="spinner spinner-lg" />
     </div>
   );
 }

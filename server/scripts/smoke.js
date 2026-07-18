@@ -1,7 +1,4 @@
-/**
- * Smoke test: health + ready endpoints.
- * Usage: node scripts/smoke.js [baseUrl]
- */
+// quick health check — node scripts/smoke.js [baseUrl]
 const base = (process.argv[2] || `http://127.0.0.1:${process.env.PORT || 5000}`).replace(/\/$/, '');
 
 async function get(path) {
@@ -33,13 +30,13 @@ async function main() {
     (health.status === 200 && (health.body?.status === 'OK' || health.body?.db === 'demo-memory'));
 
   if (!ok) {
-    console.error('❌ Smoke failed');
+    console.error('Smoke failed');
     process.exit(1);
   }
-  console.log('✅ Smoke OK');
+  console.log('Smoke OK');
 }
 
 main().catch((e) => {
-  console.error('❌', e.message);
+  console.error(e.message);
   process.exit(1);
 });
