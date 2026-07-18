@@ -1,0 +1,27 @@
+{
+  "name": "Nexora",
+  "short_name": "Nexora",
+  "description": "Community for knowledge, connection, and growth",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F0F2F5",
+  "theme_color": "#0866FF",
+  "lang": "en",
+  "categories": ["social", "education"],
+  "icons": [
+    {
+      "src": "/nexora-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/nexora-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

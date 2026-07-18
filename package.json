@@ -1,0 +1,19 @@
+{
+  "name": "nexora",
+  "version": "1.0.0",
+  "description": "Nexora - Community Platform",
+  "scripts": {
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm run dev",
+    "install-all": "cd server && npm install && cd ../client && npm install",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "verify:supabase": "cd server && npm run verify:supabase",
+    "build:client": "cd client && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.2"
+  }
+}
