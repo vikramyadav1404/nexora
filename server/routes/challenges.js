@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
 const { shapeUser } = require('../db/helpers');
+const { sendError } = require('../utils/respond');
 const {
   CHALLENGES, touchUserActivity, pushNotification
 } = require('../db/features');
@@ -33,9 +34,7 @@ router.get('/', protect, async (req, res) => {
         lastActivityDate: raw.last_activity_date || null
       }
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load challenges"); }
 });
 
 // POST /api/challenges/check-in
@@ -54,9 +53,7 @@ router.post('/check-in', protect, async (req, res) => {
       streakCount: updated.streak_count || 0,
       user: shapeUser(updated)
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load challenges"); }
 });
 
 module.exports = router;

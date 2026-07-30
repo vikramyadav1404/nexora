@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { Award, Users, UserPlus, UserMinus, ArrowRight, Gift, Edit2, Save, X, Camera } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { ErrorState, SkeletonList, SkeletonPostCard } from '../components/ui';
 
 export default function Profile() {
   const { id } = useParams();
@@ -131,11 +132,27 @@ export default function Profile() {
   };
 
   if (loading) return (
-    <div className="page-container" style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
-      <div className="spinner spinner-lg" />
+    <div className="page-container">
+      <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
+        <div className="skeleton skeleton-block" style={{ height: 180, marginBottom: 16 }} />
+        <SkeletonList count={2} Item={SkeletonPostCard} withMedia={false} />
+      </div>
     </div>
   );
-  if (!profile) return null;
+
+  // Previously this returned null on failure — a blank white page with no
+  // explanation and no way to recover.
+  if (!profile) return (
+    <div className="page-container">
+      <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
+        <ErrorState
+          title="Profile unavailable"
+          description="We could not load this profile. It may have been removed."
+          onRetry={() => { setLoading(true); fetchProfile(); }}
+        />
+      </div>
+    </div>
+  );
 
   const initials = profile.name?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
@@ -151,12 +168,12 @@ export default function Profile() {
               : <div className="profile-avatar-placeholder">{initials}</div>
             }
             {isOwnProfile && editing && (
-              <label style={{ position: 'absolute', bottom: 8, right: 8, width: 36, height: 36, borderRadius: '50%', background: '#E4E6EB', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '2px solid #fff' }}>
+              <label style={{ position: 'absolute', bottom: 8, right: 8, width: 36, height: 36, borderRadius: '50%', background: 'var(--bg-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '2px solid var(--bg-surface)' }}>
                 <Camera size={16} color="#050505" />
                 <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async (e) => {
                   const fd = new FormData();
                   fd.append('avatar', e.target.files[0]);
-                  const res = await axios.put('/api/users/profile', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                  const res = await axios.put('/api/users/profile', fd);
                   setProfile(res.data.user);
                   updateUser({ avatar: res.data.user.avatar });
                   toast.success('Avatar updated!');
@@ -330,7 +347,7 @@ export default function Profile() {
                 { label: 'Total Answers', value: profile.totalAnswers || 0 },
                 { label: 'Total Friends', value: profile.friends?.length || 0 }
               ].map(item => (
-                <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-soft)' }}>
                   <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>{item.label}</span>
                   <span style={{ fontWeight: 500 }}>{item.value}</span>
                 </div>
@@ -351,7 +368,7 @@ export default function Profile() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 16 }}>
                 {profile.badges?.map(b => (
-                  <div key={b} style={{ textAlign: 'center', padding: 20, background: 'rgba(255,255,255,0.03)', borderRadius: 'var(--radius-md)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                  <div key={b} style={{ textAlign: 'center', padding: 20, background: 'var(--border-soft)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-soft)' }}>
                     <div style={{ fontSize: 36, marginBottom: 8 }}>{BADGE_INFO[b]?.emoji}</div>
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>{BADGE_INFO[b]?.label}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{BADGE_INFO[b]?.desc}</div>
@@ -374,8 +391,8 @@ export default function Profile() {
                       <span>{icon} {badge} ({points} pts)</span>
                       <span style={{ color: 'var(--text-muted)' }}>{Math.min(profile.points || 0, points)}/{points}</span>
                     </div>
-                    <div style={{ height: 8, background: 'rgba(255,255,255,0.07)', borderRadius: 4, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${pct}%`, background: badge === 'Gold' ? 'var(--gradient-gold)' : 'var(--gradient-primary)', borderRadius: 4, transition: 'width 0.5s ease' }} />
+                    <div style={{ height: 8, background: 'var(--border-soft)', borderRadius: 4, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${pct}%`, background: badge === 'Gold' ? 'var(--gold)' : 'var(--nx-gradient)', borderRadius: 4, transition: 'width 0.5s ease' }} />
                     </div>
                   </div>
                 );

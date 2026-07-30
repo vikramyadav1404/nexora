@@ -185,7 +185,7 @@ export default function Settings() {
         {tab === 'interests' && (
           <div className="glass-card" style={{ padding: 28 }}>
             <h2 style={{ fontSize: 18, marginBottom: 6 }}>
-              <Sparkles size={18} style={{ display: 'inline', marginRight: 8, color: '#0866FF' }} />
+              <Sparkles size={18} style={{ display: 'inline', marginRight: 8, color: 'var(--nx-violet)' }} />
               Interests &amp; feed
             </h2>
             <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>
@@ -343,7 +343,7 @@ export default function Settings() {
                   const rid = req._id || req;
                   const rname = req.name || 'User';
                   return (
-                    <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0', borderBottom: '1px solid var(--border-soft)' }}>
                       <div className="avatar-placeholder" style={{ width: 44, height: 44, fontSize: 18, flexShrink: 0 }}>
                         {rname[0]?.toUpperCase()}
                       </div>
@@ -392,7 +392,7 @@ export default function Settings() {
                   const uid = u._id;
                   const isAlreadyFriend = user?.friends?.includes(uid);
                   return (
-                    <div key={uid} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                    <div key={uid} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border-soft)' }}>
                       <div className="avatar-placeholder" style={{ width: 40, height: 40, fontSize: 16, flexShrink: 0 }}>
                         {u.name?.[0]?.toUpperCase()}
                       </div>
@@ -438,7 +438,7 @@ export default function Settings() {
             </p>
 
             {!user?.emailVerified && (
-              <div style={{ marginBottom: 28, padding: 16, background: 'var(--bg-soft, #F0F2F5)', borderRadius: 8 }}>
+              <div style={{ marginBottom: 28, padding: 16, background: 'var(--bg-raised)', borderRadius: 'var(--r-md)' }}>
                 <p style={{ fontSize: 14, marginBottom: 12 }}>Verify your email with a 6-digit code.</p>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                   <button

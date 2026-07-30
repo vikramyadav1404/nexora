@@ -3,6 +3,7 @@ import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { Flame, Trophy, Target } from 'lucide-react';
+import { SkeletonList, SkeletonQuestionCard } from '../components/ui';
 
 export default function Challenges() {
   const { refreshUser } = useAuth();
@@ -36,7 +37,7 @@ export default function Challenges() {
   if (loading) {
     return (
       <div className="page-container" style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
-        <div className="spinner spinner-lg" />
+        <SkeletonList count={3} Item={SkeletonQuestionCard} />
       </div>
     );
   }

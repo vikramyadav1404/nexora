@@ -52,13 +52,20 @@ async function uploadMedia(file, { bucket = 'posts', folder = '' } = {}) {
     return { url: publicUrlForPath(bucket, objectPath), storage: 'supabase' };
   }
 
-  // multer already wrote to disk
+  // local disk (dev) — multer memory buffer or already-on-disk file
+  const sub = bucket === 'avatars' ? 'avatars' : 'posts';
+  const localDir = path.join(__dirname, '..', 'uploads', sub);
+  if (!fs.existsSync(localDir)) fs.mkdirSync(localDir, { recursive: true });
+
+  if (file.buffer) {
+    const localName = path.basename(objectPath);
+    fs.writeFileSync(path.join(localDir, localName), file.buffer);
+    return { url: `/uploads/${sub}/${localName}`, storage: 'local' };
+  }
   if (file.filename) {
-    const sub = bucket === 'avatars' ? 'avatars' : 'posts';
     return { url: `/uploads/${sub}/${file.filename}`, storage: 'local' };
   }
   if (file.path) {
-    const sub = bucket === 'avatars' ? 'avatars' : 'posts';
     return { url: `/uploads/${sub}/${path.basename(file.path)}`, storage: 'local' };
   }
   throw new Error('Cannot resolve local upload path');

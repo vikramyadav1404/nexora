@@ -89,7 +89,7 @@ export default function ForgotPassword() {
               <strong>Your new password (dev mode):</strong>
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 8,
-                background: '#fff', padding: '10px 12px', borderRadius: 6,
+                background: 'var(--bg-surface)', padding: '10px 12px', borderRadius: 6,
                 border: '1px solid var(--border-soft)'
               }}>
                 <code style={{ flex: 1, fontSize: 16, letterSpacing: 1, color: 'var(--text-base)' }}>
@@ -153,7 +153,7 @@ export default function ForgotPassword() {
             {generatedPw && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 10,
-                background: '#fff', padding: '10px 12px',
+                background: 'var(--bg-surface)', padding: '10px 12px',
                 borderRadius: 6, border: '1px solid var(--border-soft)'
               }}>
                 <code style={{ flex: 1, fontSize: 16, letterSpacing: 2 }}>{generatedPw}</code>

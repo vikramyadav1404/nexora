@@ -3,6 +3,7 @@ const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
 const { shapeNotification } = require('../db/features');
+const { sendError } = require('../utils/respond');
 
 // GET /api/notifications
 router.get('/', protect, async (req, res) => {
@@ -19,9 +20,7 @@ router.get('/', protect, async (req, res) => {
     const notifications = (data || []).map(shapeNotification);
     const unread = notifications.filter(n => !n.read).length;
     res.json({ notifications, unread });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load notifications"); }
 });
 
 // POST /api/notifications/read-all
@@ -34,9 +33,7 @@ router.post('/read-all', protect, async (req, res) => {
       .eq('read', false);
     if (error) throw error;
     res.json({ message: 'All marked as read' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load notifications"); }
 });
 
 // POST /api/notifications/:id/read
@@ -49,9 +46,7 @@ router.post('/:id/read', protect, async (req, res) => {
       .eq('user_id', req.user.id);
     if (error) throw error;
     res.json({ message: 'ok' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load notifications"); }
 });
 
 module.exports = router;

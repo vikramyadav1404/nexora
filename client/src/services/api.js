@@ -7,13 +7,25 @@ if (baseURL) {
   axios.defaults.baseURL = baseURL;
 }
 
-axios.defaults.headers.common['Content-Type'] = 'application/json';
 axios.defaults.timeout = 30000;
 
 // stick the jwt on every request if we have one
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('nexora_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+
+  // FormData needs the browser to set multipart boundary — don't force Content-Type
+  if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+    if (config.headers) {
+      delete config.headers['Content-Type'];
+      delete config.headers['content-type'];
+    }
+  } else if (config.data && typeof config.data === 'object' && !(config.data instanceof FormData)) {
+    config.headers = config.headers || {};
+    if (!config.headers['Content-Type'] && !config.headers['content-type']) {
+      config.headers['Content-Type'] = 'application/json';
+    }
+  }
   return config;
 });
 

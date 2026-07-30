@@ -25,10 +25,36 @@ function isValidUuid(id) {
   );
 }
 
+/**
+ * Makes a user-supplied value safe to interpolate into a PostgREST filter string.
+ *
+ * PostgREST parses `.or("name.ilike.%q%,email.ilike.%q%")` as structured syntax,
+ * so a `q` containing a comma, dot, or parenthesis can inject extra filter terms
+ * and change which rows come back. We were interpolating raw input in
+ * routes/users.js and routes/search.js.
+ *
+ * Anything with meaning to the filter grammar is dropped rather than escaped —
+ * PostgREST's quoting rules differ per operator, and for a search box losing a
+ * punctuation character costs nothing.
+ */
+function escapePostgrestValue(value, max = 80) {
+  if (value == null) return '';
+  return String(value)
+    .trim()
+    .slice(0, max)
+    // filter-grammar metacharacters
+    .replace(/[,().*\\"']/g, ' ')
+    // LIKE wildcards — a user typing % should not match everything
+    .replace(/[%_]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 module.exports = {
   isValidEmail,
   isStrongPassword,
   sanitizeText,
   sanitizeNamePart,
-  isValidUuid
+  isValidUuid,
+  escapePostgrestValue
 };

@@ -1,8 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { getSupabase } = require('../db/supabase');
 const { shapeUser, shapeAuthor } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
@@ -11,18 +9,15 @@ const { INTERESTS, GENDERS, normalizeInterests } = require('../db/interests');
 const { ensureInterestContent } = require('../db/seedInterests');
 const { pushNotification, touchUserActivity } = require('../db/features');
 const { uploadMedia } = require('../utils/storage');
-const { sanitizeText, sanitizeNamePart } = require('../utils/validate');
+const { optimizeImage } = require('../utils/image');
+const { sanitizeText, sanitizeNamePart, escapePostgrestValue } = require('../utils/validate');
+const { sendError } = require('../utils/respond');
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, '../uploads/avatars');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) =>
-    cb(null, `avatar_${req.user.id}_${Date.now()}${path.extname(file.originalname)}`)
+// memory buffer — works on serverless; uploadMedia handles cloud/local write
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 async function getFriendIds(db, userId) {
   const { data } = await db.from('friendships').select('friend_id').eq('user_id', userId);
@@ -46,7 +41,9 @@ async function getUsersByIds(db, ids) {
 // GET /api/users/search?q=
 router.get('/search', protect, async (req, res) => {
   try {
-    const { q } = req.query;
+    // Raw `q` used to be interpolated straight into the PostgREST .or() filter,
+    // so a comma or dot in the query could inject extra filter terms.
+    const q = escapePostgrestValue(req.query.q);
     if (!q || q.length < 2) return res.json({ users: [] });
 
     const db = getSupabase();
@@ -64,9 +61,7 @@ router.get('/search', protect, async (req, res) => {
         email: u.email, points: u.points, badges: u.badges || []
       }))
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // GET /api/users/interests/catalog
@@ -115,9 +110,7 @@ router.post('/onboarding', protect, async (req, res) => {
       user: shapeUser(row),
       seed
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // GET /api/users/suggestions — accounts matching interests
@@ -170,9 +163,7 @@ router.get('/suggestions', protect, async (req, res) => {
       }));
 
     res.json({ suggestions });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/users/follow/:id
@@ -206,9 +197,7 @@ router.post('/follow/:id', protect, async (req, res) => {
     } catch (_) { /* ignore */ }
 
     res.json({ message: `You are now following ${target.name}`, following: true });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // DELETE /api/users/follow/:id
@@ -220,9 +209,7 @@ router.delete('/follow/:id', protect, async (req, res) => {
       .eq('follower_id', req.user.id)
       .eq('following_id', req.params.id);
     res.json({ message: 'Unfollowed', following: false });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // GET /api/users/me/requests  (must be before /:id)
@@ -237,9 +224,7 @@ router.get('/me/requests', protect, async (req, res) => {
     const ids = (data || []).map(r => r.from_user_id);
     const requests = await getUsersByIds(db, ids);
     res.json({ requests });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // GET /api/users/:id
@@ -254,9 +239,7 @@ router.get('/:id', protect, async (req, res) => {
     const friends = await getUsersByIds(db, friendIds);
     const user = shapeUser(row, { friends });
     res.json({ user });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // PUT /api/users/profile
@@ -273,7 +256,8 @@ router.put('/profile', protect, upload.single('avatar'), async (req, res) => {
     if (bio !== undefined) updates.bio = sanitizeText(bio, 500);
     if (phone !== undefined) updates.phone = sanitizeText(phone, 30);
     if (req.file) {
-      const up = await uploadMedia(req.file, { bucket: 'avatars', folder: req.user.id });
+      const { file: ready } = await optimizeImage(req.file, { kind: 'avatar' });
+      const up = await uploadMedia(ready, { bucket: 'avatars', folder: req.user.id });
       updates.avatar = up.url;
     }
 
@@ -286,9 +270,7 @@ router.put('/profile', protect, upload.single('avatar'), async (req, res) => {
 
     if (error) throw error;
     res.json({ user: shapeUser(row) });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/users/friend-request/:id
@@ -335,9 +317,7 @@ router.post('/friend-request/:id', protect, async (req, res) => {
     }
 
     res.json({ message: `Friend request sent to ${target.name}` });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/users/accept-friend/:id
@@ -377,9 +357,7 @@ router.post('/accept-friend/:id', protect, async (req, res) => {
     }).catch(() => {});
 
     res.json({ message: `You and ${requester.name} are now friends!` });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/users/decline-friend/:id
@@ -391,9 +369,7 @@ router.post('/decline-friend/:id', protect, async (req, res) => {
       .eq('from_user_id', req.params.id)
       .eq('to_user_id', req.user.id);
     res.json({ message: 'Friend request declined' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // DELETE /api/users/friend/:id
@@ -404,9 +380,7 @@ router.delete('/friend/:id', protect, async (req, res) => {
     await db.from('friendships').delete().eq('user_id', req.user.id).eq('friend_id', friendId);
     await db.from('friendships').delete().eq('user_id', friendId).eq('friend_id', req.user.id);
     res.json({ message: 'Friend removed' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/users/language
@@ -444,12 +418,20 @@ router.post('/language', protect, async (req, res) => {
         ...(isMockEmail ? { devOTP: otp } : {})
       });
     } else {
-      console.log(`📱 [MOCK SMS] To: ${user.phone || 'no-phone'} | OTP: ${otp}`);
-      res.json({ message: 'OTP sent to your mobile number to verify language switch', method: 'sms', devOTP: otp });
+      // There is no real SMS provider wired up, so in dev we surface the code.
+      // In production this must never leave the server — it previously did,
+      // unconditionally, which made the OTP gate decorative.
+      const isDev = process.env.NODE_ENV !== 'production';
+      if (isDev) {
+        console.log(`[mock sms] to ${user.phone || 'no-phone'} | otp ${otp}`);
+      }
+      res.json({
+        message: 'OTP sent to your mobile number to verify language switch',
+        method: 'sms',
+        ...(isDev ? { devOTP: otp } : {})
+      });
     }
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/users/verify-language-otp
@@ -474,9 +456,7 @@ router.post('/verify-language-otp', protect, async (req, res) => {
 
     if (error) throw error;
     res.json({ message: 'Language changed successfully!', language: data.language });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 module.exports = router;

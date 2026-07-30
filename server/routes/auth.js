@@ -9,6 +9,7 @@ const { protect } = require('../middleware/auth');
 const { sendEmail, generatePassword, generateOTP } = require('../utils/email');
 const { pushNotification } = require('../db/features');
 const { authLimiter, sensitiveLimiter } = require('../middleware/rateLimit');
+const { sendError } = require('../utils/respond');
 const {
   isValidEmail, isStrongPassword, sanitizeNamePart, sanitizeText
 } = require('../utils/validate');
@@ -145,8 +146,7 @@ router.post('/register', authLimiter, async (req, res) => {
       ...(process.env.NODE_ENV !== 'production' && { devEmailOtp: emailOtp })
     });
   } catch (err) {
-    console.error('register:', err.message);
-    res.status(500).json({ message: err.message });
+    sendError(res, err, req, 'Could not create your account');
   }
 });
 
@@ -193,9 +193,7 @@ router.post('/login', authLimiter, async (req, res) => {
 
     const token = generateToken(user.id);
     res.json({ token, user: publicUser(user) });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
 // GET /api/auth/me
@@ -226,9 +224,7 @@ router.get('/me', protect, async (req, res) => {
     user.canPost = user.networkSize > 0;
     user.streakCount = req.userRow.streak_count || 0;
     res.json({ user });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
 // POST /api/auth/send-email-otp — resend verification
@@ -255,9 +251,7 @@ router.post('/send-email-otp', protect, sensitiveLimiter, async (req, res) => {
       message: 'Verification code sent to your email',
       ...(process.env.NODE_ENV !== 'production' && { devEmailOtp: otp })
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
 // POST /api/auth/verify-email
@@ -283,9 +277,7 @@ router.post('/verify-email', protect, sensitiveLimiter, async (req, res) => {
     if (error) throw error;
 
     res.json({ message: 'Email verified successfully', user: publicUser(user) });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
 // DELETE /api/auth/account — permanent delete (GDPR-style)
@@ -327,9 +319,7 @@ router.delete('/account', protect, sensitiveLimiter, async (req, res) => {
     }
 
     res.json({ message: 'Account deleted permanently' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
 // POST /api/auth/forgot-password
@@ -390,9 +380,7 @@ router.post('/forgot-password', authLimiter, sensitiveLimiter, async (req, res) 
       message: `New password sent to your ${email ? 'email' : 'phone'}. Check your inbox!`,
       ...(process.env.NODE_ENV !== 'production' && { devPassword: newPassword })
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
 // POST /api/auth/change-password
@@ -413,14 +401,50 @@ router.post('/change-password', protect, sensitiveLimiter, async (req, res) => {
     if (error) throw error;
 
     res.json({ message: 'Password changed successfully' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
 // POST /api/auth/generate-password
 router.post('/generate-password', (req, res) => {
   res.json({ password: generatePassword(12) });
+});
+
+/**
+ * GET /api/auth/realtime-token
+ *
+ * Mints a short-lived Supabase-compatible JWT so the browser can open a
+ * Realtime subscription to its own notifications.
+ *
+ * Nexora signs its own session tokens with JWT_SECRET, which Supabase knows
+ * nothing about — so the app token can't authenticate a Realtime socket, and
+ * `auth.uid()` is always null. This issues a second, narrowly-scoped token
+ * signed with the project's SUPABASE_JWT_SECRET; the RLS policy in migration
+ * 007 matches on its `sub` claim.
+ *
+ * Deliberately short-lived (1h) and carries no privileges beyond `authenticated`.
+ * The service_role key is never exposed to the client.
+ */
+router.get('/realtime-token', protect, (req, res) => {
+  const secret = process.env.SUPABASE_JWT_SECRET;
+  if (!secret) {
+    return res.status(503).json({
+      message: 'Realtime is not configured',
+      hint: 'Set SUPABASE_JWT_SECRET (Supabase → Project Settings → API → JWT Secret)'
+    });
+  }
+
+  const expiresIn = 60 * 60;
+  const token = jwt.sign(
+    {
+      sub: req.user.id,
+      role: 'authenticated',
+      aud: 'authenticated',
+      exp: Math.floor(Date.now() / 1000) + expiresIn
+    },
+    secret
+  );
+
+  res.json({ token, expiresIn });
 });
 
 module.exports = router;

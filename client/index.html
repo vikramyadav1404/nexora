@@ -9,7 +9,30 @@
       content="Nexora — interest-based community to connect with friends, share posts, ask questions, and grow together."
     />
     <meta name="robots" content="index,follow" />
-    <meta name="theme-color" content="#0866FF" />
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0B0B0F" media="(prefers-color-scheme: dark)" />
+    <!--
+      Theme must be resolved BEFORE first paint. Doing this in a React effect
+      (as we used to) flashes a white screen at every cold load for dark users.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('nexora_theme');
+          var theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', theme);
+          var meta = document.querySelector('meta[name="theme-color"]:not([media])');
+          if (!meta) {
+            meta = document.createElement('meta');
+            meta.setAttribute('name', 'theme-color');
+            document.head.appendChild(meta);
+          }
+          meta.setAttribute('content', theme === 'dark' ? '#0B0B0F' : '#FFFFFF');
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Nexora" />
     <meta property="og:title" content="Nexora" />

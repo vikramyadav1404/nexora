@@ -2,18 +2,25 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from '../services/api';
 import { Layers } from 'lucide-react';
+import { EmptyState, ErrorState, SkeletonList, SkeletonQuestionCard } from '../components/ui';
 
 export default function Spaces() {
   const navigate = useNavigate();
   const [spaces, setSpaces] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
+    setFailed(false);
     axios.get('/api/spaces')
       .then(res => setSpaces(res.data.spaces || []))
-      .catch(() => {})
+      // This used to swallow the error and render an empty grid with no message
+      .catch(() => setFailed(true))
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(load, []);
 
   return (
     <div className="page-container">
@@ -26,7 +33,15 @@ export default function Spaces() {
         </p>
 
         {loading ? (
-          <div className="spinner spinner-lg" style={{ margin: '40px auto' }} />
+          <SkeletonList count={4} Item={SkeletonQuestionCard} />
+        ) : failed ? (
+          <ErrorState title="Could not load Spaces" onRetry={load} />
+        ) : spaces.length === 0 ? (
+          <EmptyState
+            icon={Layers}
+            title="No spaces yet"
+            description="Interest communities will appear here once topics have activity."
+          />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
             {spaces.map(s => (

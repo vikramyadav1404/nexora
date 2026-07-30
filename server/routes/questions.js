@@ -5,6 +5,7 @@ const {
   isToday, getDailyQuestionLimit, shapeQuestion, shapeAnswer, shapeAuthor, AUTHOR_FIELDS
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
+const { sendError } = require('../utils/respond');
 
 async function getVoteLists(db, table, idCol, id) {
   const { data } = await db.from(table).select('user_id, vote_type').eq(idCol, id);
@@ -75,9 +76,7 @@ router.get('/', protect, async (req, res) => {
 
     const total = sort === 'unanswered' ? result.length : (count || 0);
     res.json({ questions: result, total, pages: Math.ceil(total / limit) || 1 });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load questions"); }
 });
 
 // GET /api/questions/:id
@@ -118,9 +117,7 @@ router.get('/:id', protect, async (req, res) => {
         downvotes: votes.downvotes
       })
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load questions"); }
 });
 
 // POST /api/questions
@@ -178,9 +175,7 @@ router.post('/', protect, async (req, res) => {
         downvotes: []
       })
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load questions"); }
 });
 
 // POST /api/questions/:id/vote
@@ -228,9 +223,7 @@ router.post('/:id/vote', protect, async (req, res) => {
 
     const votes = await getVoteLists(db, 'question_votes', 'question_id', questionId);
     res.json({ upvotes: votes.upvotes.length, downvotes: votes.downvotes.length });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load questions"); }
 });
 
 // DELETE /api/questions/:id
@@ -245,9 +238,7 @@ router.delete('/:id', protect, async (req, res) => {
     // answers cascade via FK
     await db.from('questions').delete().eq('id', question.id);
     res.json({ message: 'Question deleted' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load questions"); }
 });
 
 module.exports = router;

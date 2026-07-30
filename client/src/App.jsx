@@ -1,9 +1,16 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Navbar from './components/Navbar';
 import MobileNav from './components/MobileNav';
+import ErrorBoundary from './components/ErrorBoundary';
+import useScrollRestoration from './hooks/useScrollRestoration';
+import useReducedMotion from './hooks/useReducedMotion';
+import { incrementUnread } from './hooks/useUnreadCount';
+import { subscribeToNotifications, unsubscribe as unsubscribeRealtime } from './services/realtime';
+import { SkeletonList, SkeletonPostCard } from './components/ui';
 
 // login flow loads first; everything else can wait
 import Landing from './pages/Landing';
@@ -52,7 +59,8 @@ const PAGE_TITLES = {
   '/privacy': 'Privacy'
 };
 
-function RouteFallback() {
+/** Full-screen fallback — only for the auth gate, before we know who you are. */
+function BootFallback() {
   return (
     <div className="loading-screen" role="status" aria-live="polite">
       <div className="loading-logo">
@@ -63,9 +71,24 @@ function RouteFallback() {
   );
 }
 
+/**
+ * Route-level fallback while a lazy chunk downloads.
+ *
+ * This used to be the same 100vh spinner as the auth gate, so every cold
+ * navigation flashed a blank screen. A content-shaped skeleton keeps the
+ * chrome in place and reads as fast rather than broken.
+ */
+function RouteFallback() {
+  return (
+    <div className="content-wrapper" style={{ maxWidth: 640 }}>
+      <SkeletonList count={3} Item={SkeletonPostCard} />
+    </div>
+  );
+}
+
 const ProtectedRoute = ({ children, requireOnboarding = true }) => {
   const { user, loading } = useAuth();
-  if (loading) return <RouteFallback />;
+  if (loading) return <BootFallback />;
   if (!user) return <Navigate to="/login" replace />;
   if (requireOnboarding && !user.onboardingCompleted) {
     return <Navigate to="/onboarding" replace />;
@@ -75,7 +98,7 @@ const ProtectedRoute = ({ children, requireOnboarding = true }) => {
 
 const PublicRoute = ({ children }) => {
   const { user, loading } = useAuth();
-  if (loading) return <RouteFallback />;
+  if (loading) return <BootFallback />;
   if (!user) return children;
   return <Navigate to={user.onboardingCompleted ? '/feed' : '/onboarding'} replace />;
 };
@@ -95,8 +118,60 @@ function DocumentTitle() {
   return null;
 }
 
+function ScrollManager() {
+  useScrollRestoration();
+  return null;
+}
+
+/**
+ * Keeps the unread badge live.
+ *
+ * Without this, a notification arriving while you sit on a page stays invisible
+ * until you navigate. No-ops when Supabase Realtime env vars are absent.
+ */
+function RealtimeBridge() {
+  const { user } = useAuth();
+  const userId = user?._id || user?.id;
+
+  useEffect(() => {
+    if (!userId) return undefined;
+    let cancelled = false;
+    let stop = () => {};
+
+    subscribeToNotifications(userId, () => incrementUnread(1)).then((fn) => {
+      if (cancelled) fn();
+      else stop = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      stop();
+      unsubscribeRealtime();
+    };
+  }, [userId]);
+
+  return null;
+}
+
+/** Cross-fade + a few px of lift. Deliberately subtle — this fires constantly. */
+function RouteTransition({ children }) {
+  const reduced = useReducedMotion();
+  if (reduced) return children;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -4 }}
+      transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 const AppRoutes = () => {
   const { user } = useAuth();
+  const location = useLocation();
   const showNav = user && user.onboardingCompleted;
 
   return (
@@ -108,77 +183,104 @@ const AppRoutes = () => {
       {showNav && <MobileNav />}
       <main id="main-content" className={showNav ? 'app-main' : undefined} tabIndex={-1}>
         <Suspense fallback={<RouteFallback />}>
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-            <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
-            <Route
-              path="/onboarding"
-              element={(
-                <ProtectedRoute requireOnboarding={false}>
-                  <Onboarding />
-                </ProtectedRoute>
-              )}
-            />
-            <Route path="/feed" element={<ProtectedRoute><Feed /></ProtectedRoute>} />
-            <Route path="/qa" element={<ProtectedRoute><QA /></ProtectedRoute>} />
-            <Route path="/qa/:id" element={<ProtectedRoute><QuestionDetail /></ProtectedRoute>} />
-            <Route path="/ask" element={<ProtectedRoute><AskQuestion /></ProtectedRoute>} />
-            <Route path="/subscriptions" element={<ProtectedRoute><Subscriptions /></ProtectedRoute>} />
-            <Route path="/profile/:id" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-            <Route path="/leaderboard" element={<ProtectedRoute><Leaderboard /></ProtectedRoute>} />
-            <Route path="/search" element={<ProtectedRoute><SearchPage /></ProtectedRoute>} />
-            <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-            <Route path="/spaces" element={<ProtectedRoute><Spaces /></ProtectedRoute>} />
-            <Route path="/spaces/:id" element={<ProtectedRoute><SpaceDetail /></ProtectedRoute>} />
-            <Route path="/bookmarks" element={<ProtectedRoute><Bookmarks /></ProtectedRoute>} />
-            <Route path="/challenges" element={<ProtectedRoute><Challenges /></ProtectedRoute>} />
-            <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-            <Route path="/terms" element={<Terms />} />
-            <Route path="/privacy" element={<Privacy />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+          <AnimatePresence mode="wait" initial={false}>
+            <Routes location={location} key={location.pathname}>
+              <Route path="/" element={<RouteTransition><Landing /></RouteTransition>} />
+              <Route path="/login" element={<PublicRoute><RouteTransition><Login /></RouteTransition></PublicRoute>} />
+              <Route path="/register" element={<PublicRoute><RouteTransition><Register /></RouteTransition></PublicRoute>} />
+              <Route path="/forgot-password" element={<RouteTransition><ForgotPassword /></RouteTransition>} />
+              <Route
+                path="/onboarding"
+                element={(
+                  <ProtectedRoute requireOnboarding={false}>
+                    <RouteTransition><Onboarding /></RouteTransition>
+                  </ProtectedRoute>
+                )}
+              />
+              <Route path="/feed" element={<ProtectedRoute><RouteTransition><Feed /></RouteTransition></ProtectedRoute>} />
+              <Route path="/qa" element={<ProtectedRoute><RouteTransition><QA /></RouteTransition></ProtectedRoute>} />
+              <Route path="/qa/:id" element={<ProtectedRoute><RouteTransition><QuestionDetail /></RouteTransition></ProtectedRoute>} />
+              <Route path="/ask" element={<ProtectedRoute><RouteTransition><AskQuestion /></RouteTransition></ProtectedRoute>} />
+              <Route path="/subscriptions" element={<ProtectedRoute><RouteTransition><Subscriptions /></RouteTransition></ProtectedRoute>} />
+              <Route path="/profile/:id" element={<ProtectedRoute><RouteTransition><Profile /></RouteTransition></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute><RouteTransition><Settings /></RouteTransition></ProtectedRoute>} />
+              <Route path="/leaderboard" element={<ProtectedRoute><RouteTransition><Leaderboard /></RouteTransition></ProtectedRoute>} />
+              <Route path="/search" element={<ProtectedRoute><RouteTransition><SearchPage /></RouteTransition></ProtectedRoute>} />
+              <Route path="/notifications" element={<ProtectedRoute><RouteTransition><Notifications /></RouteTransition></ProtectedRoute>} />
+              <Route path="/spaces" element={<ProtectedRoute><RouteTransition><Spaces /></RouteTransition></ProtectedRoute>} />
+              <Route path="/spaces/:id" element={<ProtectedRoute><RouteTransition><SpaceDetail /></RouteTransition></ProtectedRoute>} />
+              <Route path="/bookmarks" element={<ProtectedRoute><RouteTransition><Bookmarks /></RouteTransition></ProtectedRoute>} />
+              <Route path="/challenges" element={<ProtectedRoute><RouteTransition><Challenges /></RouteTransition></ProtectedRoute>} />
+              <Route path="/admin" element={<ProtectedRoute><RouteTransition><Admin /></RouteTransition></ProtectedRoute>} />
+              <Route path="/terms" element={<RouteTransition><Terms /></RouteTransition>} />
+              <Route path="/privacy" element={<RouteTransition><Privacy /></RouteTransition>} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </AnimatePresence>
         </Suspense>
       </main>
     </>
   );
 };
 
-function ThemeBoot() {
+/**
+ * The inline script in index.html already set data-theme before first paint.
+ * This only keeps the tab's theme-color meta in sync when the user toggles.
+ */
+function ThemeSync() {
   useEffect(() => {
-    const theme = localStorage.getItem('nexora_theme') || 'light';
-    document.documentElement.setAttribute('data-theme', theme);
+    const apply = () => {
+      const theme = document.documentElement.getAttribute('data-theme') || 'light';
+      const meta = document.querySelector('meta[name="theme-color"]:not([media])');
+      if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B0B0F' : '#FFFFFF');
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme']
+    });
+    return () => observer.disconnect();
   }, []);
   return null;
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <ThemeBoot />
-        <DocumentTitle />
-        <AppRoutes />
-        <Toaster
-          position="bottom-center"
-          toastOptions={{
-            style: {
-              background: 'var(--bg-surface)',
-              color: 'var(--text-base)',
-              border: '1px solid var(--border-soft)',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontFamily: 'Helvetica, Arial, sans-serif',
-              boxShadow: '0 2px 12px rgba(0, 0, 0, 0.15)'
-            },
-            success: { iconTheme: { primary: '#0866FF', secondary: '#fff' } },
-            error: { iconTheme: { primary: '#F02849', secondary: '#fff' } }
-          }}
-        />
-      </BrowserRouter>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <BrowserRouter>
+          <ThemeSync />
+          <DocumentTitle />
+          <ScrollManager />
+          <RealtimeBridge />
+          <AppRoutes />
+          <Toaster
+            position="bottom-center"
+            containerStyle={{
+              /* Clear the 58px mobile tab bar — toasts used to land on top of it */
+              bottom: 'calc(72px + env(safe-area-inset-bottom, 0px))'
+            }}
+            toastOptions={{
+              duration: 3200,
+              style: {
+                background: 'var(--bg-surface)',
+                color: 'var(--text-base)',
+                border: '1px solid var(--border-soft)',
+                borderRadius: 'var(--r-lg)',
+                fontSize: 'var(--fs-base)',
+                fontFamily: 'var(--font-body)',
+                fontWeight: 500,
+                boxShadow: 'var(--shadow-lg)',
+                padding: '10px 14px'
+              },
+              success: { iconTheme: { primary: 'var(--green)', secondary: 'var(--bg-surface)' } },
+              error: { iconTheme: { primary: 'var(--red)', secondary: 'var(--bg-surface)' } }
+            }}
+          />
+        </BrowserRouter>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

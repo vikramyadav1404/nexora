@@ -97,7 +97,7 @@ export default function Onboarding() {
       <div className="animate-slideUp" style={{
         width: '100%',
         maxWidth: 560,
-        background: '#fff',
+        background: 'var(--bg-surface)',
         borderRadius: 12,
         boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
         padding: '28px 24px 24px'
@@ -105,7 +105,7 @@ export default function Onboarding() {
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
           <div style={{
             width: 52, height: 52, borderRadius: '50%', margin: '0 auto 12px',
-            background: '#E7F3FF', display: 'flex', alignItems: 'center', justifyContent: 'center'
+            background: 'var(--nx-violet-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}>
             <Sparkles size={24} color="#0866FF" />
           </div>
@@ -140,7 +140,7 @@ export default function Onboarding() {
                     padding: '10px 12px',
                     borderRadius: 8,
                     border: gender === g.id ? '2px solid #0866FF' : '1px solid var(--border)',
-                    background: gender === g.id ? '#E7F3FF' : '#F5F6F7',
+                    background: gender === g.id ? 'var(--nx-violet-soft)' : 'var(--bg-raised)',
                     fontWeight: 600,
                     fontSize: 14,
                     cursor: 'pointer',
@@ -179,7 +179,7 @@ export default function Onboarding() {
                   padding: '12px 12px',
                   borderRadius: 10,
                   border: active ? '2px solid #0866FF' : '1px solid var(--border-soft)',
-                  background: active ? '#E7F3FF' : '#F7F8FA',
+                  background: active ? 'var(--nx-violet-soft)' : 'var(--bg-raised)',
                   cursor: 'pointer',
                   textAlign: 'left',
                   fontFamily: 'var(--font-body)',

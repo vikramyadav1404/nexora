@@ -5,6 +5,7 @@ const { protect } = require('../middleware/auth');
 const { shapeUser } = require('../db/helpers');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
+const { sendError } = require('../utils/respond');
 
 // POST /api/blocks/:id
 router.post('/blocks/:id', protect, async (req, res) => {
@@ -30,9 +31,7 @@ router.post('/blocks/:id', protect, async (req, res) => {
     await db.from('follows').delete().eq('follower_id', blockedId).eq('following_id', req.user.id);
 
     res.json({ message: 'User blocked', blocked: true });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // DELETE /api/blocks/:id
@@ -44,9 +43,7 @@ router.delete('/blocks/:id', protect, async (req, res) => {
       .eq('blocker_id', req.user.id)
       .eq('blocked_id', req.params.id);
     res.json({ message: 'User unblocked', blocked: false });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // GET /api/blocks
@@ -64,9 +61,7 @@ router.get('/blocks', protect, async (req, res) => {
 
     const { data: users } = await db.from('users').select('*').in('id', ids);
     res.json({ blocks: (users || []).map(u => shapeUser(u)) });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/reports
@@ -92,9 +87,7 @@ router.post('/reports', protect, writeLimiter, async (req, res) => {
 
     if (error) throw error;
     res.status(201).json({ message: 'Report submitted. Our team will review it.' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 module.exports = router;

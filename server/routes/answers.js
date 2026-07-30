@@ -6,6 +6,7 @@ const {
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { pushNotification, touchUserActivity } = require('../db/features');
+const { sendError } = require('../utils/respond');
 
 async function getVoteLists(db, answerId) {
   const { data } = await db.from('answer_votes').select('user_id, vote_type').eq('answer_id', answerId);
@@ -70,9 +71,7 @@ router.post('/:questionId', protect, async (req, res) => {
       answer: shapeAnswer(answer, { author: shapeAuthor(author), upvotes: [], downvotes: [] }),
       pointsEarned: 5
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/answers/:id/vote
@@ -150,9 +149,7 @@ router.post('/:id/vote', protect, async (req, res) => {
 
     const votes = await getVoteLists(db, answerId);
     res.json({ upvotes: votes.upvotes.length, downvotes: votes.downvotes.length });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // POST /api/answers/:id/accept
@@ -188,9 +185,7 @@ router.post('/:id/accept', protect, async (req, res) => {
     }
 
     res.json({ message: 'Answer accepted!' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 // DELETE /api/answers/:id
@@ -220,9 +215,7 @@ router.delete('/:id', protect, async (req, res) => {
     await db.from('answers').delete().eq('id', answer.id);
 
     res.json({ message: 'Answer deleted and points deducted' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
 module.exports = router;

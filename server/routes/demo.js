@@ -33,7 +33,10 @@ const protectDemo = async (req, res, next) => {
       });
     }
     req.user = shapeDemoUser(user);
+    // Handlers below reference `req.userRaw`; the real middleware calls the same
+    // thing `req.userRow`. Expose both names (same object) so demo mode works.
     req.userRow = user;
+    req.userRaw = user;
     next();
   } catch {
     return res.status(401).json({ message: 'Token invalid or expired' });
@@ -158,12 +161,23 @@ router.get('/posts', protectDemo, async (req, res) => {
     return score(b) - score(a);
   });
 
-  const from = (page - 1) * limit;
-  const slice = posts.slice(from, from + limit);
+  // Cursor pagination, matching the real route (routes/posts.js). The demo
+  // store is an in-memory array, so the "cursor" is just the index after the
+  // last id we handed out — but the wire contract is identical, which is the
+  // point: the client cannot tell the two backends apart.
+  const cursorId = req.query.cursor
+    ? Buffer.from(String(req.query.cursor), 'base64url').toString('utf8')
+    : null;
+
+  const startAt = cursorId ? posts.findIndex(p => p.id === cursorId) + 1 : 0;
+  const slice = posts.slice(startAt, startAt + limit);
+  const hasMore = startAt + limit < posts.length;
+  const last = slice[slice.length - 1];
+
   res.json({
     posts: slice.map(shapePost),
-    total: posts.length,
-    pages: Math.ceil(posts.length / limit) || 1,
+    nextCursor: hasMore && last ? Buffer.from(last.id).toString('base64url') : null,
+    hasMore,
     personalized: interests.length > 0,
     interests
   });

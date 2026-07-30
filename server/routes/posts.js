@@ -1,114 +1,147 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { getSupabase } = require('../db/supabase');
 const {
-  isToday, getDailyPostLimit, shapePost, shapeAuthor, AUTHOR_FIELDS
+  isToday, getDailyPostLimit, shapePost, shapeAuthor, loadAuthorMap, groupBy
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { touchUserActivity, pushNotification } = require('../db/features');
 const { uploadMedia } = require('../utils/storage');
+const { optimizeImage } = require('../utils/image');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
+const { sendError } = require('../utils/respond');
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, '../uploads/posts');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+// memory storage works on Vercel; uploadMedia sends buffer to Supabase / local disk
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 }
 });
-const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
-async function loadPostBundle(db, post) {
-  const [{ data: author }, { data: media }, { data: likes }, { data: comments }] = await Promise.all([
-    db.from('users').select(AUTHOR_FIELDS).eq('id', post.author_id).single(),
-    db.from('post_media').select('*').eq('post_id', post.id),
-    db.from('post_likes').select('user_id').eq('post_id', post.id),
-    db.from('post_comments').select('*').eq('post_id', post.id).order('created_at', { ascending: true })
+// Warn once, not once per request, if migration 006 hasn't been run.
+let feedRpcWarned = false;
+
+/**
+ * Hydrate a whole page of posts in a fixed number of queries.
+ *
+ * This replaces a per-post `loadPostBundle` that issued 4–5 round trips each —
+ * a page of 10 posts cost 42–52 requests to PostgREST. Now it is 5 regardless
+ * of page size: media, likes, comments, post authors, comment authors.
+ */
+async function loadPostBundles(db, posts) {
+  if (!posts.length) return [];
+  const ids = posts.map(p => p.id);
+
+  const [{ data: media }, { data: likes }, { data: comments }] = await Promise.all([
+    db.from('post_media').select('*').in('post_id', ids),
+    db.from('post_likes').select('post_id, user_id').in('post_id', ids),
+    db.from('post_comments').select('*').in('post_id', ids).order('created_at', { ascending: true })
   ]);
 
-  let shapedComments = [];
-  if (comments?.length) {
-    const authorIds = [...new Set(comments.map(c => c.author_id))];
-    const { data: authors } = await db.from('users').select('id, name, avatar').in('id', authorIds);
-    const map = Object.fromEntries((authors || []).map(a => [a.id, a]));
-    shapedComments = comments.map(c => ({
-      ...c,
-      author: shapeAuthor(map[c.author_id] || { id: c.author_id, name: 'User' })
-    }));
-  }
+  // One author lookup covering both post authors and comment authors.
+  const authors = await loadAuthorMap(db, [
+    ...posts.map(p => p.author_id),
+    ...(comments || []).map(c => c.author_id)
+  ]);
 
-  return shapePost(post, {
-    author: shapeAuthor(author),
-    media: media || [],
-    likes: likes || [],
-    comments: shapedComments
-  });
+  const mediaBy = groupBy(media, 'post_id');
+  const likesBy = groupBy(likes, 'post_id');
+  const commentsBy = groupBy(comments, 'post_id');
+
+  return posts.map(post =>
+    shapePost(post, {
+      author: authors[post.author_id],
+      media: mediaBy[post.id] || [],
+      likes: likesBy[post.id] || [],
+      comments: (commentsBy[post.id] || []).map(c => ({
+        ...c,
+        author: authors[c.author_id] || shapeAuthor({ id: c.author_id, name: 'User' })
+      }))
+    })
+  );
+}
+
+/** Single-post convenience wrapper, used after create/comment. */
+async function loadPostBundle(db, post) {
+  const [shaped] = await loadPostBundles(db, [post]);
+  return shaped;
+}
+
+/** Opaque cursor so clients don't build their own keyset tuples. */
+function encodeCursor(post) {
+  if (!post) return null;
+  return Buffer.from(`${post.created_at}|${post.id}`).toString('base64url');
+}
+
+function decodeCursor(cursor) {
+  if (!cursor) return { ts: null, id: null };
+  try {
+    const [ts, id] = Buffer.from(String(cursor), 'base64url').toString('utf8').split('|');
+    return ts && id ? { ts, id } : { ts: null, id: null };
+  } catch {
+    return { ts: null, id: null };
+  }
 }
 
 // GET /api/posts — personalized by interests + follows when available
 router.get('/', protect, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
     const db = getSupabase();
     const interests = req.userRow.interests || [];
     const personalized = req.query.personalized !== '0';
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
+    const { ts, id } = decodeCursor(req.query.cursor);
 
-    // Who the user follows
-    const { data: followRows } = await db
-      .from('follows')
-      .select('following_id')
-      .eq('follower_id', req.user.id);
-    const followingIds = (followRows || []).map(f => f.following_id);
+    /*
+     * Ranking and paging both happen in SQL now.
+     *
+     * The previous implementation fetched a 60-row window, sorted it in JS and
+     * sliced a page out. That capped the feed at 60 posts, and because the
+     * window size changed with the page number the sort order changed too —
+     * so infinite scroll could show a post twice or skip it entirely.
+     */
+    let rows;
+    const { data, error } = await db.rpc('feed_for_user', {
+      p_user_id: req.user.id,
+      p_cursor_ts: ts,
+      p_cursor_id: id,
+      p_limit: limit + 1, // one extra row tells us whether more exist
+      p_personalized: personalized
+    });
 
-    // Pull a larger window then rank for personalization
-    const fetchLimit = personalized ? Math.max(to + 1, 60) : to + 1;
-    const { data: posts, error } = await db
-      .from('posts')
-      .select('*')
-      .eq('is_public', true)
-      .order('created_at', { ascending: false })
-      .limit(fetchLimit);
-
-    if (error) throw error;
-
-    let ranked = posts || [];
-
-    if (personalized && (interests.length || followingIds.length)) {
-      ranked = [...ranked].sort((a, b) => {
-        const score = (p) => {
-          let s = 0;
-          if (followingIds.includes(p.author_id)) s += 50;
-          const tags = p.interest_tags || [];
-          if (tags.some(t => interests.includes(t))) s += 30;
-          if (p.seed_key) s += 5;
-          // slight recency bias kept by original order as tiebreaker
-          return s;
-        };
-        return score(b) - score(a);
-      });
+    if (error) {
+      // The RPC ships in migration 006; fall back to plain recency so an
+      // un-migrated database still serves a (correct, unranked) feed.
+      if (!feedRpcWarned) {
+        feedRpcWarned = true;
+        console.warn(
+          `feed_for_user unavailable (${error.message}); serving unranked feed. ` +
+          'Run server/db/migrations/006_feed.sql to enable ranking.'
+        );
+      }
+      let q = db.from('posts').select('*').eq('is_public', true);
+      if (ts) q = q.lt('created_at', ts);
+      const fallback = await q.order('created_at', { ascending: false }).limit(limit + 1);
+      if (fallback.error) throw fallback.error;
+      rows = fallback.data || [];
+    } else {
+      rows = data || [];
     }
 
-    const pageSlice = ranked.slice(from, to + 1);
-    const bundled = await Promise.all(pageSlice.map(p => loadPostBundle(db, p)));
-    const total = ranked.length;
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const posts = await loadPostBundles(db, pageRows);
+
     res.json({
-      posts: bundled,
-      total,
-      pages: Math.ceil(total / limit) || 1,
+      posts,
+      // Opaque keyset cursor — pass it back as ?cursor= for the next page.
+      nextCursor: hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null,
+      hasMore,
       personalized: personalized && interests.length > 0,
       interests
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
 });
 
 // POST /api/posts
@@ -146,9 +179,15 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
     const mediaFiles = [];
     if (req.files?.length) {
       for (const f of req.files) {
-        const up = await uploadMedia(f, { bucket: 'posts', folder: userId });
+        // Resize + WebP before storage. A phone photo is often 4-12MB; feed
+        // images never render wider than ~640px, so this is a ~95% saving.
+        const { file: ready, optimized, before, after, saved } = await optimizeImage(f, { kind: 'post' });
+        if (optimized) {
+          console.log('[image] ' + Math.round(before/1024) + 'KB -> ' + Math.round(after/1024) + 'KB (' + saved + '% smaller)');
+        }
+        const up = await uploadMedia(ready, { bucket: 'posts', folder: userId });
         mediaFiles.push({
-          type: (f.mimetype || '').startsWith('image') ? 'image' : 'video',
+          type: (ready.mimetype || '').startsWith('image') ? 'image' : 'video',
           url: up.url
         });
       }
@@ -192,13 +231,9 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
       postLimit: postLimit === Infinity ? '∞' : postLimit
     });
   } catch (err) {
-    console.error('create post:', err.message);
-    if (err.message?.includes('column') || err.code === 'PGRST204') {
-      return res.status(503).json({
-        message: 'Database schema incomplete. Run server/db/migrations/001_setup_step_a.sql in Supabase.'
-      });
-    }
-    res.status(500).json({ message: err.message });
+    // sendError already surfaces schema/config errors verbatim — they tell the
+    // operator exactly what to run — and masks everything else.
+    sendError(res, err, req, 'Could not publish that post');
   }
 });
 
@@ -237,9 +272,7 @@ router.post('/:id/like', protect, async (req, res) => {
       .eq('post_id', postId);
 
     res.json({ likes: count || 0, liked: !existing });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
 });
 
 // POST /api/posts/:id/comment
@@ -286,9 +319,7 @@ router.post('/:id/comment', protect, async (req, res) => {
         createdAt: c.created_at
       }))
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
 });
 
 // POST /api/posts/:id/share
@@ -302,9 +333,7 @@ router.post('/:id/share', protect, async (req, res) => {
     const { error } = await db.from('posts').update({ shares }).eq('id', req.params.id);
     if (error) throw error;
     res.json({ shares });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
 });
 
 // DELETE /api/posts/:id
@@ -319,9 +348,7 @@ router.delete('/:id', protect, async (req, res) => {
     const { error } = await db.from('posts').delete().eq('id', req.params.id);
     if (error) throw error;
     res.json({ message: 'Post deleted' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
 });
 
 module.exports = router;

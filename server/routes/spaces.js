@@ -3,6 +3,7 @@ const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
 const { INTERESTS } = require('../db/interests');
+const { sendError } = require('../utils/respond');
 const {
   shapeUser, shapePost, shapeQuestion, shapeAuthor, AUTHOR_FIELDS
 } = require('../db/helpers');
@@ -28,9 +29,7 @@ router.get('/', protect, async (req, res) => {
     });
 
     res.json({ spaces });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load Spaces"); }
 });
 
 // GET /api/spaces/:id
@@ -91,9 +90,7 @@ router.get('/:id', protect, async (req, res) => {
     const members = (memberRows || []).map(u => shapeUser(u));
 
     res.json({ space, posts, questions, members });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not load Spaces"); }
 });
 
 module.exports = router;

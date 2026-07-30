@@ -4,6 +4,7 @@ const { getSupabase } = require('../db/supabase');
 const { requireAdmin } = require('../middleware/admin');
 const { shapeUser } = require('../db/helpers');
 const { sanitizeText } = require('../utils/validate');
+const { sendError } = require('../utils/respond');
 
 // GET /api/admin/reports
 router.get('/reports', requireAdmin, async (req, res) => {
@@ -15,9 +16,7 @@ router.get('/reports', requireAdmin, async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
     res.json({ reports: data || [] });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Admin action failed"); }
 });
 
 // PATCH /api/admin/reports/:id
@@ -41,9 +40,7 @@ router.patch('/reports/:id', requireAdmin, async (req, res) => {
       .single();
     if (error) throw error;
     res.json({ report: data });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Admin action failed"); }
 });
 
 // POST /api/admin/users/:id/ban
@@ -55,9 +52,7 @@ router.post('/users/:id/ban', requireAdmin, async (req, res) => {
       .eq('id', req.params.id);
     if (error) throw error;
     res.json({ message: 'User banned (deactivated)' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Admin action failed"); }
 });
 
 // POST /api/admin/users/:id/unban
@@ -69,9 +64,7 @@ router.post('/users/:id/unban', requireAdmin, async (req, res) => {
       .eq('id', req.params.id);
     if (error) throw error;
     res.json({ message: 'User unbanned' });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Admin action failed"); }
 });
 
 // GET /api/admin/stats
@@ -90,9 +83,7 @@ router.get('/stats', requireAdmin, async (req, res) => {
       .eq('status', 'open');
     stats.openReports = openReports;
     res.json({ stats });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Admin action failed"); }
 });
 
 // GET /api/admin/users/search
@@ -107,9 +98,7 @@ router.get('/users/search', requireAdmin, async (req, res) => {
       .limit(20);
     if (error) throw error;
     res.json({ users: (data || []).map(u => shapeUser(u)) });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Admin action failed"); }
 });
 
 module.exports = router;

@@ -4,6 +4,7 @@ import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { Bell, CheckCheck } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { SkeletonList, SkeletonListRow } from '../components/ui';
 
 export default function Notifications() {
   const navigate = useNavigate();
@@ -50,7 +51,7 @@ export default function Notifications() {
         </div>
 
         {loading ? (
-          <div className="spinner spinner-lg" style={{ margin: '40px auto' }} />
+          <SkeletonList count={5} Item={SkeletonListRow} />
         ) : items.length === 0 ? (
           <div className="empty-state">
             <Bell size={40} style={{ margin: '0 auto 12px' }} />

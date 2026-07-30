@@ -1,25 +1,45 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  Image, Send, ThumbsUp, MessageCircle, Share2, Trash2, Users, X,
-  ChevronDown, Home, HelpCircle, CreditCard, Trophy, Settings, User,
-  BarChart2, Globe, Video, Smile, Bookmark
+  Image, Send, Heart, MessageCircle, Share2, Trash2, Users, X,
+  Home, HelpCircle, CreditCard, Trophy, Settings, User,
+  BarChart2, Globe, Bookmark, MoreHorizontal, Loader2, ArrowDown
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { TRANSLATIONS } from '../i18n/translations';
-import { mediaUrl } from '../utils/mediaUrl';
+import {
+  Avatar, EmptyState, ErrorState, IconButton, PostMedia,
+  Sheet, SkeletonList, SkeletonPostCard
+} from '../components/ui';
+import { useOptimisticList } from '../hooks/useOptimistic';
+import useInfiniteScroll from '../hooks/useInfiniteScroll';
+import usePullToRefresh from '../hooks/usePullToRefresh';
+import useReducedMotion from '../hooks/useReducedMotion';
+
+const MAX_MEDIA = 5;
+const MAX_FILE_MB = 50;
 
 function postIdOf(post) {
   return post?._id || post?.id;
 }
 
-function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onProfile }) {
+function haptic(ms = 8) {
+  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+    try { navigator.vibrate(ms); } catch { /* unsupported */ }
+  }
+}
+
+function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onSave, onProfile, index }) {
   const [showComments, setShowComments] = useState(false);
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const reduced = useReducedMotion();
+
   const uid = currentUser?._id || currentUser?.id;
   const authorId = post.author?._id || post.author?.id;
   const pid = postIdOf(post);
@@ -29,67 +49,77 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
   const commentCount = post.comments?.length || 0;
 
   const handleComment = async () => {
-    if (!comment.trim()) return;
+    const body = comment.trim();
+    if (!body) return;
     setSubmitting(true);
+    // Clear immediately — the optimistic comment is already in the list
+    setComment('');
     try {
-      await onComment(pid, comment);
-      setComment('');
+      await onComment(pid, body);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const authorInitial = post.author?.name?.[0]?.toUpperCase() || 'U';
+  const like = useCallback(() => {
+    haptic();
+    onLike(pid);
+  }, [onLike, pid]);
 
   return (
-    <div className="post-card animate-fadeIn">
+    <motion.article
+      className="post-card"
+      initial={reduced ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={
+        reduced
+          ? { duration: 0 }
+          : // Stagger only the first screenful; later pages appear immediately
+            { duration: 0.32, ease: [0.16, 1, 0.3, 1], delay: Math.min(index, 4) * 0.04 }
+      }
+    >
       <div className="post-header">
-        <div
+        <button
+          type="button"
           onClick={() => authorId && onProfile(authorId)}
-          style={{ cursor: 'pointer' }}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter') authorId && onProfile(authorId); }}
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+          aria-label={`View ${post.author?.name}'s profile`}
         >
-          {post.author?.avatar
-            ? <img src={mediaUrl(post.author.avatar)} className="avatar" alt="" />
-            : <div className="avatar-placeholder">{authorInitial}</div>
-          }
-        </div>
-        <div className="post-author-info" style={{ flex: 1 }}>
-          <h4 onClick={() => authorId && onProfile(authorId)} style={{ cursor: authorId ? 'pointer' : 'default' }}>
+          <Avatar src={post.author?.avatar} name={post.author?.name} size={40} />
+        </button>
+
+        <div className="post-author-info" style={{ flex: 1, minWidth: 0 }}>
+          <h4
+            onClick={() => authorId && onProfile(authorId)}
+            style={{ cursor: authorId ? 'pointer' : 'default' }}
+          >
             {post.author?.name}
           </h4>
           <span>
-            {formatDistanceToNow(new Date(post.createdAt), { addSuffix: true })} · <Globe size={12} style={{ display: 'inline', verticalAlign: 'middle' }} />
+            {formatDistanceToNow(new Date(post.createdAt), { addSuffix: true })}
+            {' · '}
+            <Globe size={12} style={{ display: 'inline', verticalAlign: 'middle' }} />
           </span>
         </div>
-        {post.author?.badges?.slice(0, 1).map(b => (
+
+        {post.author?.badges?.slice(0, 1).map((b) => (
           <span key={b} className={`badge badge-${b}`}>{b}</span>
         ))}
+
         {isOwn && (
-          <button
-            type="button"
-            className="btn btn-icon btn-sm"
-            onClick={() => onDelete(pid)}
-            title="Delete post"
-            style={{ color: 'var(--text-faint)' }}
-          >
-            <Trash2 size={16} />
-          </button>
+          <IconButton
+            icon={MoreHorizontal}
+            label="Post options"
+            small
+            onClick={() => setMenuOpen(true)}
+          />
         )}
       </div>
 
       {post.content && <div className="post-content">{post.content}</div>}
 
       {post.media?.length > 0 && (
-        <div className="post-media">
-          {post.media.map((m, i) => (
-            m.type === 'image'
-              ? <img key={i} src={mediaUrl(m.url)} alt="Post media" />
-              : <video key={i} src={mediaUrl(m.url)} controls />
-          ))}
-        </div>
+        <PostMedia media={post.media} onDoubleTapLike={!isLiked ? like : undefined} />
       )}
 
       {(likeCount > 0 || commentCount > 0 || post.shares > 0) && (
@@ -97,8 +127,8 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
           <div className="likes-count">
             {likeCount > 0 && (
               <>
-                <span className="fb-reaction-dot">
-                  <ThumbsUp size={10} fill="#fff" />
+                <span className="fb-reaction-dot" style={{ background: 'var(--red)' }}>
+                  <Heart size={10} fill="currentColor" strokeWidth={0} />
                 </span>
                 {likeCount}
               </>
@@ -109,7 +139,10 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
               <button
                 type="button"
                 onClick={() => setShowComments(true)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 15 }}
+                style={{
+                  background: 'none', border: 'none', color: 'var(--text-faint)',
+                  cursor: 'pointer', fontSize: 'var(--fs-base)'
+                }}
               >
                 {commentCount} comment{commentCount !== 1 ? 's' : ''}
               </button>
@@ -122,76 +155,114 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onP
       )}
 
       <div className="post-actions" style={{ borderTop: '1px solid var(--border-soft)' }}>
-        <button type="button" className={`action-btn ${isLiked ? 'liked' : ''}`} onClick={() => onLike(pid)}>
-          <ThumbsUp size={18} fill={isLiked ? 'currentColor' : 'none'} />
-          Like
-        </button>
-        <button type="button" className="action-btn" onClick={() => setShowComments(!showComments)}>
-          <MessageCircle size={18} />
-          Comment
-        </button>
-        <button type="button" className="action-btn" onClick={() => onShare(pid)}>
-          <Share2 size={18} />
-          Share
-        </button>
         <button
           type="button"
-          className="action-btn"
-          onClick={async () => {
-            try {
-              await axios.post('/api/bookmarks', { type: 'post', id: pid });
-              toast.success('Saved');
-            } catch {
-              toast.error('Could not save');
-            }
-          }}
+          className={`action-btn ${isLiked ? 'liked' : ''}`}
+          onClick={like}
+          aria-pressed={isLiked}
         >
-          <Bookmark size={18} />
-          Save
+          <motion.span
+            className="action-icon"
+            key={isLiked ? 'on' : 'off'}
+            initial={reduced ? false : { scale: 0.7 }}
+            animate={{ scale: isLiked ? 1.12 : 1 }}
+            transition={reduced ? { duration: 0 } : { type: 'spring', stiffness: 600, damping: 16 }}
+          >
+            <Heart size={18} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={isLiked ? 0 : 2} />
+          </motion.span>
+          Like
+        </button>
+
+        <button type="button" className="action-btn" onClick={() => setShowComments((v) => !v)}>
+          <span className="action-icon"><MessageCircle size={18} /></span>
+          Comment
+        </button>
+
+        <button type="button" className="action-btn" onClick={() => { haptic(); onShare(pid); }}>
+          <span className="action-icon"><Share2 size={18} /></span>
+          Share
+        </button>
+
+        <button
+          type="button"
+          className={`action-btn ${post.saved ? 'saved' : ''}`}
+          onClick={() => { haptic(); onSave(pid, !post.saved); }}
+          aria-pressed={!!post.saved}
+        >
+          <span className="action-icon">
+            <Bookmark size={18} fill={post.saved ? 'currentColor' : 'none'} strokeWidth={post.saved ? 0 : 2} />
+          </span>
+          {post.saved ? 'Saved' : 'Save'}
         </button>
       </div>
 
-      {showComments && (
-        <div className="post-comments">
-          {post.comments?.slice(-8).map((c, i) => (
-            <div key={i} className="comment-item">
-              <div className="avatar-placeholder" style={{ width: 32, height: 32, fontSize: 12, flexShrink: 0 }}>
-                {c.author?.name?.[0]?.toUpperCase() || 'U'}
+      <AnimatePresence initial={false}>
+        {showComments && (
+          <motion.div
+            className="post-comments"
+            initial={reduced ? false : { height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: reduced ? 0 : 0.22, ease: [0.16, 1, 0.3, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            {post.comments?.slice(-8).map((c, i) => (
+              <div key={c._id || c.id || `pending-${i}`} className="comment-item">
+                <Avatar src={c.author?.avatar} name={c.author?.name} size={32} />
+                <div className="comment-bubble" style={{ opacity: c.pending ? 0.55 : 1 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{c.author?.name}</span>
+                  <p style={{ fontSize: 14, color: 'var(--text-base)', margin: '2px 0 0' }}>{c.content}</p>
+                </div>
               </div>
-              <div className="comment-bubble">
-                <span style={{ fontWeight: 600, fontSize: 13 }}>{c.author?.name}</span>
-                <p style={{ fontSize: 14, color: 'var(--text-base)', margin: '2px 0 0' }}>{c.content}</p>
-              </div>
+            ))}
+
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
+              <Avatar src={currentUser?.avatar} name={currentUser?.name} size={32} />
+              <input
+                className="form-input"
+                placeholder="Write a comment…"
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                onKeyDown={(e) => {
+                  // Shift+Enter should not submit
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleComment();
+                  }
+                }}
+                style={{
+                  flex: 1, padding: '8px 14px', fontSize: 14,
+                  borderRadius: 'var(--r-pill)', background: 'var(--bg-raised)', border: 'none'
+                }}
+              />
+              <IconButton
+                icon={Send}
+                label="Send comment"
+                size={16}
+                onClick={handleComment}
+                disabled={submitting || !comment.trim()}
+                variant="filled"
+              />
             </div>
-          ))}
-          <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-            <div className="avatar-placeholder" style={{ width: 32, height: 32, fontSize: 12, flexShrink: 0 }}>
-              {currentUser?.name?.[0]?.toUpperCase() || 'U'}
-            </div>
-            <input
-              className="form-input"
-              placeholder="Write a comment…"
-              value={comment}
-              onChange={e => setComment(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleComment()}
-              style={{
-                flex: 1, padding: '8px 14px', fontSize: 14,
-                borderRadius: 18, background: 'var(--bg-base)', border: 'none'
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={handleComment}
-              disabled={submitting || !comment.trim()}
-              style={{ borderRadius: 18 }}
-            >
-              <Send size={14} />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Replaces the native confirm() this used to call */}
+      <Sheet open={menuOpen} onClose={() => setMenuOpen(false)} title="Post options">
+        <button
+          type="button"
+          className="dropdown-item danger"
+          onClick={() => {
+            setMenuOpen(false);
+            onDelete(pid);
+          }}
+        >
+          <Trash2 size={18} />
+          Delete post
+        </button>
+      </Sheet>
+    </motion.article>
   );
 }
 
@@ -199,152 +270,341 @@ export default function Feed() {
   const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
   const t = TRANSLATIONS[user?.language || 'en'];
+
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const [content, setContent] = useState('');
   const [media, setMedia] = useState([]);
   const [posting, setPosting] = useState(false);
+  const [uploadPct, setUploadPct] = useState(0);
   const [postsToday, setPostsToday] = useState(0);
-  const [page, setPage] = useState(1);
+  const [nextCursor, setNextCursor] = useState(null);
   const [hasMore, setHasMore] = useState(true);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [followingBusy, setFollowingBusy] = useState(null);
   const [feedInterests, setFeedInterests] = useState(user?.interests || []);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const fileRef = useRef();
 
-  useEffect(() => {
-    fetchPosts();
-    fetchSuggestions();
-  }, []);
+  const { run } = useOptimisticList(setPosts);
+  const uid = user?._id || user?.id;
 
-  const fetchPosts = async (p = 1) => {
+  /* ── data ─────────────────────────────────────────────── */
+
+  /**
+   * Cursor (keyset) pagination.
+   *
+   * The API used to take ?page=N, rank a 60-row window server-side and slice
+   * it — which capped the feed at 60 posts and could show or skip a post as the
+   * window shifted. It now returns an opaque `nextCursor`; passing it back asks
+   * for rows strictly older than the last one we hold, so the sequence is
+   * stable no matter what gets posted while you scroll.
+   */
+  const fetchPosts = useCallback(async (cursor = null) => {
+    if (!cursor) setLoadError(false);
+    else setLoadingMore(true);
     try {
-      const res = await axios.get(`/api/posts?page=${p}&limit=10`);
-      if (p === 1) setPosts(res.data.posts);
-      else setPosts(prev => [...prev, ...res.data.posts]);
-      setHasMore(p < res.data.pages);
-      setPage(p);
+      const res = await axios.get('/api/posts', {
+        params: { limit: 10, ...(cursor ? { cursor } : {}) }
+      });
+      const incoming = res.data.posts || [];
+      setPosts((prev) => {
+        if (!cursor) return incoming;
+        // Belt and braces against an observer double-fire
+        const seen = new Set(prev.map(postIdOf));
+        return [...prev, ...incoming.filter((x) => !seen.has(postIdOf(x)))];
+      });
+      setNextCursor(res.data.nextCursor || null);
+      setHasMore(!!res.data.hasMore);
       if (res.data.interests) setFeedInterests(res.data.interests);
     } catch {
-      toast.error('Failed to load posts');
+      if (!cursor) setLoadError(true);
+      else toast.error('Could not load more posts');
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
-  };
+  }, []);
 
-  const fetchSuggestions = async () => {
+  const fetchSuggestions = useCallback(async () => {
     try {
       const res = await axios.get('/api/users/suggestions');
       setSuggestions(res.data.suggestions || []);
     } catch {
-      /* ignore */
+      /* a missing suggestion rail is not worth interrupting the feed */
     }
-  };
+  }, []);
 
-  const handleFollow = async (id) => {
-    setFollowingBusy(id);
+  /**
+   * The Save button had no persisted state — it never showed whether a post was
+   * already bookmarked. There is no lightweight "my bookmark ids" endpoint, so
+   * we reuse GET /api/bookmarks once, off the critical path, and mark the feed.
+   */
+  const fetchSavedIds = useCallback(async () => {
     try {
-      await axios.post(`/api/users/follow/${id}`);
-      setSuggestions(prev => prev.filter(s => (s._id || s.id) !== id));
-      toast.success('Following');
-      fetchPosts(1);
-    } catch (err) {
-      toast.error(err.response?.data?.message || 'Could not follow');
-    } finally {
-      setFollowingBusy(null);
+      const res = await axios.get('/api/bookmarks');
+      const savedIds = new Set(
+        (res.data.bookmarks || []).filter((b) => b.type === 'post').map((b) => b.id)
+      );
+      if (savedIds.size) {
+        setPosts((prev) => prev.map((p) => (savedIds.has(postIdOf(p)) ? { ...p, saved: true } : p)));
+      }
+    } catch {
+      /* leaving Save unfilled is better than blocking the feed */
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchPosts().then(fetchSavedIds);
+    fetchSuggestions();
+  }, [fetchPosts, fetchSuggestions, fetchSavedIds]);
+
+  const refresh = useCallback(async () => {
+    await Promise.all([fetchPosts(), fetchSuggestions()]);
+  }, [fetchPosts, fetchSuggestions]);
+
+  const { pull, refreshing, ready } = usePullToRefresh(refresh);
+
+  const sentinelRef = useInfiniteScroll({
+    hasMore,
+    loading: loading || loadingMore,
+    onLoadMore: () => fetchPosts(nextCursor)
+  });
+
+  /* ── mutations (optimistic) ───────────────────────────── */
+
+  const handleLike = useCallback(
+    (postId) => {
+      const current = posts.find((p) => postIdOf(p) === postId);
+      if (!current) return;
+      const liked = current.likes?.includes(uid);
+
+      run({
+        id: postId,
+        optimistic: (p) => ({
+          likes: liked
+            ? (p.likes || []).filter((id) => id !== uid)
+            : [...(p.likes || []), uid]
+        }),
+        request: () => axios.post(`/api/posts/${postId}/like`),
+        commit: (res) => (prev) => ({
+          likes: res.data.liked
+            ? [...new Set([...(prev.likes || []), uid])]
+            : (prev.likes || []).filter((id) => id !== uid)
+        }),
+        onError: () => toast.error('Could not update your like')
+      });
+    },
+    [posts, run, uid]
+  );
+
+  const handleComment = useCallback(
+    async (postId, body) => {
+      const optimisticComment = {
+        _id: `pending-${Date.now()}`,
+        content: body,
+        author: { _id: uid, name: user?.name, avatar: user?.avatar },
+        createdAt: new Date().toISOString(),
+        pending: true
+      };
+
+      await run({
+        id: postId,
+        dedupe: false,
+        optimistic: (p) => ({ comments: [...(p.comments || []), optimisticComment] }),
+        request: () => axios.post(`/api/posts/${postId}/comment`, { content: body }),
+        commit: (res) => ({ comments: res.data.comments }),
+        onError: () => toast.error('Comment failed to send')
+      });
+    },
+    [run, uid, user?.avatar, user?.name]
+  );
+
+  const handleShare = useCallback(
+    (postId) => {
+      run({
+        id: postId,
+        optimistic: (p) => ({ shares: (p.shares || 0) + 1 }),
+        request: () => axios.post(`/api/posts/${postId}/share`),
+        commit: (res) => ({ shares: res.data.shares }),
+        onError: () => toast.error('Could not share')
+      });
+    },
+    [run]
+  );
+
+  const handleSave = useCallback(
+    (postId, next) => {
+      run({
+        id: postId,
+        optimistic: { saved: next },
+        request: () =>
+          next
+            ? axios.post('/api/bookmarks', { type: 'post', id: postId })
+            // DELETE /api/bookmarks takes the target in the body, not the path
+            : axios.delete('/api/bookmarks', { data: { type: 'post', id: postId } }),
+        onError: () => toast.error(next ? 'Could not save' : 'Could not remove')
+      });
+    },
+    [run]
+  );
+
+  const confirmDelete = useCallback(async () => {
+    const postId = confirmDeleteId;
+    setConfirmDeleteId(null);
+    if (!postId) return;
+
+    const snapshot = posts;
+    setPosts((prev) => prev.filter((p) => postIdOf(p) !== postId));
+    try {
+      await axios.delete(`/api/posts/${postId}`);
+      toast.success('Post deleted');
+    } catch {
+      setPosts(snapshot);
+      toast.error('Could not delete that post');
+    }
+  }, [confirmDeleteId, posts]);
+
+  const handleFollow = useCallback(
+    async (id) => {
+      setFollowingBusy(id);
+      try {
+        await axios.post(`/api/users/follow/${id}`);
+        setSuggestions((prev) => prev.filter((s) => (s._id || s.id) !== id));
+        toast.success('Following');
+        // Refresh the derived counts without discarding the feed or scroll position
+        refreshUser();
+      } catch (err) {
+        toast.error(err.response?.data?.message || 'Could not follow');
+      } finally {
+        setFollowingBusy(null);
+      }
+    },
+    [refreshUser]
+  );
+
+  /* ── composer ─────────────────────────────────────────── */
+
+  // Object URLs must be revoked or every re-render leaks one
+  const previews = useMemo(
+    () => media.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
+    [media]
+  );
+  useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p.url)), [previews]);
+
+  const addFiles = useCallback(
+    (incoming) => {
+      const files = Array.from(incoming || []);
+      if (!files.length) return;
+
+      const accepted = [];
+      for (const f of files) {
+        if (!/^(image|video)\//.test(f.type)) {
+          toast.error(`${f.name} is not an image or video`);
+          continue;
+        }
+        if (f.size > MAX_FILE_MB * 1024 * 1024) {
+          toast.error(`${f.name} is over ${MAX_FILE_MB}MB`);
+          continue;
+        }
+        accepted.push(f);
+      }
+
+      setMedia((prev) => {
+        // Append rather than replace — picking twice used to discard the first set
+        const next = [...prev, ...accepted];
+        if (next.length > MAX_MEDIA) {
+          toast.error(`Up to ${MAX_MEDIA} files per post`);
+          return next.slice(0, MAX_MEDIA);
+        }
+        return next;
+      });
+      setComposerOpen(true);
+    },
+    []
+  );
 
   const handlePost = async () => {
     if (!content.trim() && media.length === 0) return;
     setPosting(true);
+    setUploadPct(0);
     try {
       const formData = new FormData();
       if (content) formData.append('content', content);
-      media.forEach(f => formData.append('media', f));
+      media.forEach((f) => formData.append('media', f));
 
       const res = await axios.post('/api/posts', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        onUploadProgress: (e) => {
+          if (e.total) setUploadPct(Math.round((e.loaded / e.total) * 100));
+        }
       });
-      setPosts(prev => [res.data.post, ...prev]);
+
+      setPosts((prev) => [res.data.post, ...prev]);
       setContent('');
       setMedia([]);
       setPostsToday(res.data.postsToday);
       setComposerOpen(false);
+      haptic(12);
       toast.success('Post published');
       refreshUser();
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to post');
     } finally {
       setPosting(false);
+      setUploadPct(0);
     }
   };
 
-  const handleLike = async (postId) => {
-    try {
-      const res = await axios.post(`/api/posts/${postId}/like`);
-      setPosts(prev => prev.map(p => {
-        if (postIdOf(p) !== postId) return p;
-        const uid = user?._id || user?.id;
-        return {
-          ...p,
-          likes: res.data.liked
-            ? [...(p.likes || []), uid]
-            : (p.likes || []).filter(id => id !== uid)
-        };
-      }));
-    } catch { toast.error('Failed to like'); }
-  };
+  // Paste an image straight into the composer
+  useEffect(() => {
+    if (!composerOpen) return undefined;
+    const onPaste = (e) => {
+      const files = Array.from(e.clipboardData?.files || []);
+      if (files.length) {
+        e.preventDefault();
+        addFiles(files);
+      }
+    };
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [composerOpen, addFiles]);
 
-  const handleComment = async (postId, content) => {
-    try {
-      const res = await axios.post(`/api/posts/${postId}/comment`, { content });
-      setPosts(prev => prev.map(p => (postIdOf(p) === postId ? { ...p, comments: res.data.comments } : p)));
-    } catch { toast.error('Failed to comment'); }
-  };
+  /* ── derived ──────────────────────────────────────────── */
 
-  const handleShare = async (postId) => {
-    try {
-      const res = await axios.post(`/api/posts/${postId}/share`);
-      setPosts(prev => prev.map(p => (postIdOf(p) === postId ? { ...p, shares: res.data.shares } : p)));
-      toast.success('Post shared');
-    } catch { toast.error('Failed to share'); }
-  };
-
-  const handleDelete = async (postId) => {
-    if (!confirm('Delete this post?')) return;
-    try {
-      await axios.delete(`/api/posts/${postId}`);
-      setPosts(prev => prev.filter(p => postIdOf(p) !== postId));
-      toast.success('Post deleted');
-    } catch { toast.error('Failed to delete'); }
-  };
-
-  // Network = friends + follows (backend uses same rule after onboarding hubs)
   const friendCount = user?.friendCount ?? user?.friends?.length ?? 0;
   const followCount = user?.followCount ?? 0;
   const networkSize = user?.networkSize ?? (friendCount + followCount);
-  const getDailyLimit = () => {
-    if (networkSize === 0) return 0;
-    if (networkSize === 1) return 1;
-    if (networkSize < 10) return 2;
-    return '∞';
-  };
-  const dailyLimit = getDailyLimit();
-  const userId = user?._id || user?.id;
-  const initials = user?.name?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) || 'U';
+  const dailyLimit =
+    networkSize === 0 ? 0 : networkSize === 1 ? 1 : networkSize < 10 ? 2 : '∞';
+  const userId = uid;
 
   return (
-    <div className="page-container">
+    <div className="page-container ptr-host">
+      {/* Pull-to-refresh affordance (touch only) */}
+      {pull > 0 && (
+        <motion.div
+          className="ptr-indicator"
+          style={{ x: '-50%' }}
+          animate={{ y: pull, rotate: refreshing ? 360 : ready ? 180 : 0 }}
+          transition={
+            refreshing
+              ? { rotate: { repeat: Infinity, duration: 0.8, ease: 'linear' } }
+              : { type: 'spring', stiffness: 400, damping: 30 }
+          }
+        >
+          {refreshing ? <Loader2 size={18} /> : <ArrowDown size={18} />}
+        </motion.div>
+      )}
+
       <div className="feed-layout">
         {/* ── Left sidebar ── */}
         <aside className="sidebar-left">
           <button type="button" className="fb-side-link" onClick={() => navigate(`/profile/${userId}`)}>
-            {user?.avatar
-              ? <img src={mediaUrl(user.avatar)} className="avatar" style={{ width: 36, height: 36 }} alt="" />
-              : <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>{initials}</div>
-            }
+            <Avatar src={user?.avatar} name={user?.name} size={36} />
             <span style={{ fontWeight: 600 }}>{user?.name}</span>
           </button>
 
@@ -385,19 +645,14 @@ export default function Feed() {
 
         {/* ── Center feed ── */}
         <main style={{ minWidth: 0 }}>
-          {/* Interest chips */}
           {feedInterests?.length > 0 && (
             <div className="fb-widget" style={{ marginBottom: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-sub)', marginBottom: 8 }}>
                 Your interests · personalized home
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {feedInterests.map(tag => (
-                  <span
-                    key={tag}
-                    className="tag"
-                    style={{ textTransform: 'capitalize', margin: 0 }}
-                  >
+                {feedInterests.map((tag) => (
+                  <span key={tag} className="tag" style={{ textTransform: 'capitalize', margin: 0 }}>
                     {tag.replace(/-/g, ' ')}
                   </span>
                 ))}
@@ -406,7 +661,16 @@ export default function Feed() {
           )}
 
           {/* Composer */}
-          <div className="fb-composer">
+          <div
+            className={`fb-composer composer-dropzone ${dragging ? 'is-dragging' : ''}`}
+            onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragging(false);
+              addFiles(e.dataTransfer?.files);
+            }}
+          >
             {networkSize === 0 ? (
               <div className="alert alert-warning" style={{ marginBottom: 0 }}>
                 <Users size={18} />
@@ -420,52 +684,46 @@ export default function Feed() {
             ) : (
               <>
                 <div className="fb-composer-top">
-                  {user?.avatar
-                    ? <img src={mediaUrl(user.avatar)} className="avatar" alt="" />
-                    : <div className="avatar-placeholder">{initials}</div>
-                  }
+                  <Avatar src={user?.avatar} name={user?.name} size={40} />
                   {composerOpen ? (
                     <textarea
                       className="form-input"
                       placeholder={`What's on your mind, ${user?.name?.split(' ')[0]}?`}
                       value={content}
-                      onChange={e => setContent(e.target.value)}
+                      onChange={(e) => setContent(e.target.value)}
                       rows={3}
                       autoFocus
                       style={{
-                        flex: 1, resize: 'none', borderRadius: 12,
-                        background: 'var(--bg-base)', border: 'none', fontSize: 16
+                        flex: 1, resize: 'none', borderRadius: 'var(--r-lg)',
+                        background: 'var(--bg-raised)', border: 'none', fontSize: 16
                       }}
                     />
                   ) : (
-                    <button
-                      type="button"
-                      className="fb-composer-input"
-                      onClick={() => setComposerOpen(true)}
-                    >
+                    <button type="button" className="fb-composer-input" onClick={() => setComposerOpen(true)}>
                       What&apos;s on your mind, {user?.name?.split(' ')[0]}?
                     </button>
                   )}
                 </div>
 
-                {composerOpen && media.length > 0 && (
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                    {media.map((f, i) => (
-                      <div key={i} style={{ position: 'relative' }}>
-                        <img
-                          src={URL.createObjectURL(f)}
-                          alt=""
-                          style={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 8 }}
-                        />
+                {composerOpen && previews.length > 0 && (
+                  <div className="composer-thumbs">
+                    {previews.map((p, i) => (
+                      <div key={p.url} className="composer-thumb">
+                        {/* Videos used to render through <img> and showed as broken tiles */}
+                        {p.file.type.startsWith('video/') ? (
+                          <>
+                            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                            <video src={p.url} muted playsInline preload="metadata" />
+                            <span className="composer-thumb-badge">Video</span>
+                          </>
+                        ) : (
+                          <img src={p.url} alt={p.file.name} />
+                        )}
                         <button
                           type="button"
-                          onClick={() => setMedia(m => m.filter((_, j) => j !== i))}
-                          style={{
-                            position: 'absolute', top: -6, right: -6, background: '#65676B',
-                            border: 'none', borderRadius: '50%', width: 22, height: 22,
-                            cursor: 'pointer', color: 'white', display: 'flex',
-                            alignItems: 'center', justifyContent: 'center'
-                          }}
+                          className="composer-thumb-remove"
+                          aria-label={`Remove ${p.file.name}`}
+                          onClick={() => setMedia((m) => m.filter((_, j) => j !== i))}
                         >
                           <X size={12} />
                         </button>
@@ -474,9 +732,19 @@ export default function Feed() {
                   </div>
                 )}
 
+                {posting && uploadPct > 0 && (
+                  <div className="upload-progress" aria-label={`Uploading ${uploadPct}%`}>
+                    <div className="upload-progress-bar" style={{ width: `${uploadPct}%` }} />
+                  </div>
+                )}
+
                 {composerOpen && (
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 10, justifyContent: 'flex-end' }}>
-                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => { setComposerOpen(false); setContent(''); setMedia([]); }}>
+                  <div style={{ display: 'flex', gap: 8, margin: '10px 0', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => { setComposerOpen(false); setContent(''); setMedia([]); }}
+                    >
                       Cancel
                     </button>
                     <button
@@ -498,22 +766,28 @@ export default function Feed() {
                     accept="image/*,video/*"
                     multiple
                     style={{ display: 'none' }}
-                    onChange={e => {
-                      setMedia(Array.from(e.target.files || []));
-                      setComposerOpen(true);
+                    onChange={(e) => {
+                      addFiles(e.target.files);
+                      // Reset so picking the same file twice still fires onChange
+                      e.target.value = '';
                     }}
                   />
-                  <button type="button" className="fb-composer-action" onClick={() => fileRef.current?.click()}>
-                    <Video size={20} color="#F02849" />
-                    Live video
+                  <button
+                    type="button"
+                    className="fb-composer-action"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={media.length >= MAX_MEDIA}
+                  >
+                    <Image size={20} style={{ color: 'var(--green)' }} />
+                    Photo / video
                   </button>
-                  <button type="button" className="fb-composer-action" onClick={() => fileRef.current?.click()}>
-                    <Image size={20} color="#45BD62" />
-                    Photo/video
-                  </button>
-                  <button type="button" className="fb-composer-action" onClick={() => setComposerOpen(true)}>
-                    <Smile size={20} color="#F7B928" />
-                    Feeling
+                  <button
+                    type="button"
+                    className="fb-composer-action"
+                    onClick={() => setComposerOpen(true)}
+                  >
+                    <MessageCircle size={20} style={{ color: 'var(--nx-violet)' }} />
+                    Write something
                   </button>
                 </div>
               </>
@@ -522,42 +796,55 @@ export default function Feed() {
 
           {/* Posts */}
           {loading ? (
-            [1, 2, 3].map(i => (
-              <div key={i} className="post-card">
-                <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-                  <div className="skeleton" style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0 }} />
-                  <div style={{ flex: 1 }}>
-                    <div className="skeleton" style={{ height: 14, width: '40%', marginBottom: 6 }} />
-                    <div className="skeleton" style={{ height: 12, width: '25%' }} />
-                  </div>
-                </div>
-                <div className="skeleton" style={{ height: 80 }} />
-              </div>
-            ))
+            <SkeletonList count={3} Item={SkeletonPostCard} />
+          ) : loadError ? (
+            <ErrorState
+              title="Could not load your feed"
+              description="We could not reach Nexora just now. Check your connection and try again."
+              onRetry={() => { setLoading(true); fetchPosts(); }}
+            />
           ) : posts.length === 0 ? (
-            <div className="empty-state">
-              <Users size={48} style={{ margin: '0 auto 16px' }} />
-              <h3>No posts yet</h3>
-              <p>When you and your friends share, it will show up here.</p>
-            </div>
+            <EmptyState
+              icon={Users}
+              title="Your feed is quiet"
+              description="Follow a few interest hubs or add friends, and their posts will land here."
+              action={
+                <button type="button" className="btn btn-primary" onClick={() => navigate('/spaces')}>
+                  Explore Spaces
+                </button>
+              }
+            />
           ) : (
             <>
-              {posts.map(post => (
-                <PostCard
-                  key={postIdOf(post)}
-                  post={post}
-                  currentUser={user}
-                  onLike={handleLike}
-                  onComment={handleComment}
-                  onShare={handleShare}
-                  onDelete={handleDelete}
-                  onProfile={(id) => navigate(`/profile/${id}`)}
-                />
-              ))}
-              {hasMore && (
-                <button type="button" className="btn btn-secondary" style={{ width: '100%' }} onClick={() => fetchPosts(page + 1)}>
-                  <ChevronDown size={16} /> See more posts
-                </button>
+              <AnimatePresence initial={false}>
+                {posts.map((post, i) => (
+                  <PostCard
+                    key={postIdOf(post)}
+                    index={i}
+                    post={post}
+                    currentUser={user}
+                    onLike={handleLike}
+                    onComment={handleComment}
+                    onShare={handleShare}
+                    onSave={handleSave}
+                    onDelete={setConfirmDeleteId}
+                    onProfile={(id) => navigate(`/profile/${id}`)}
+                  />
+                ))}
+              </AnimatePresence>
+
+              {/* Auto-loads as it approaches the viewport */}
+              <div ref={sentinelRef} className="feed-sentinel" />
+
+              {loadingMore && <SkeletonPostCard withMedia={false} />}
+
+              {!hasMore && posts.length > 4 && (
+                <p style={{
+                  textAlign: 'center', color: 'var(--text-faint)',
+                  fontSize: 'var(--fs-sm)', padding: 'var(--space-6) 0'
+                }}>
+                  You are all caught up
+                </p>
               )}
             </>
           )}
@@ -565,11 +852,10 @@ export default function Feed() {
 
         {/* ── Right sidebar ── */}
         <aside className="sidebar-right">
-          {/* People to follow based on interests */}
           {suggestions.length > 0 && (
             <div className="fb-widget">
               <div className="fb-widget-title">People you may like</div>
-              {suggestions.slice(0, 6).map(s => {
+              {suggestions.slice(0, 6).map((s) => {
                 const sid = s._id || s.id;
                 return (
                   <div
@@ -579,36 +865,36 @@ export default function Feed() {
                       padding: '8px 0', borderBottom: '1px solid var(--border-soft)'
                     }}
                   >
-                    <div
+                    <button
+                      type="button"
                       onClick={() => navigate(`/profile/${sid}`)}
-                      style={{ cursor: 'pointer' }}
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+                      aria-label={`View ${s.name}'s profile`}
                     >
-                      {s.avatar
-                        ? <img src={mediaUrl(s.avatar)} className="avatar" style={{ width: 36, height: 36 }} alt="" />
-                        : (
-                          <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>
-                            {s.name?.[0]?.toUpperCase() || 'U'}
-                          </div>
-                        )}
-                    </div>
+                      <Avatar src={s.avatar} name={s.name} size={36} />
+                    </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div style={{
+                        fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap',
+                        overflow: 'hidden', textOverflow: 'ellipsis'
+                      }}>
                         {s.name}
                       </div>
-                      <div style={{ fontSize: 12, color: 'var(--text-faint)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {s.creatorInterest
-                          ? `${s.creatorInterest} hub`
-                          : (s.interests?.[0] || 'Member')}
+                      <div style={{
+                        fontSize: 12, color: 'var(--text-faint)', whiteSpace: 'nowrap',
+                        overflow: 'hidden', textOverflow: 'ellipsis'
+                      }}>
+                        {s.creatorInterest ? `${s.creatorInterest} hub` : (s.interests?.[0] || 'Member')}
                       </div>
                     </div>
                     <button
                       type="button"
                       className="btn btn-primary btn-sm"
-                      style={{ height: 28, fontSize: 12, padding: '0 10px' }}
+                      style={{ height: 30, fontSize: 12, padding: '0 12px' }}
                       disabled={followingBusy === sid}
                       onClick={() => handleFollow(sid)}
                     >
-                      {followingBusy === sid ? '…' : 'Follow'}
+                      {followingBusy === sid ? <div className="spinner" style={{ width: 12, height: 12 }} /> : 'Follow'}
                     </button>
                   </div>
                 );
@@ -626,25 +912,25 @@ export default function Feed() {
               { range: '1 connection', limit: '1/day', active: networkSize === 1 },
               { range: '2–9 connections', limit: '2/day', active: networkSize >= 2 && networkSize < 10 },
               { range: '10+ connections', limit: 'Unlimited', active: networkSize >= 10 }
-            ].map(r => (
+            ].map((r) => (
               <div
                 key={r.range}
                 style={{
-                  display: 'flex', justifyContent: 'space-between', padding: '8px 8px',
-                  borderRadius: 8, marginBottom: 2, fontSize: 14,
-                  background: r.active ? 'var(--fb-blue-soft)' : 'transparent',
+                  display: 'flex', justifyContent: 'space-between', padding: '8px',
+                  borderRadius: 'var(--r-sm)', marginBottom: 2, fontSize: 14,
+                  background: r.active ? 'var(--nx-violet-soft)' : 'transparent',
                   fontWeight: r.active ? 600 : 400
                 }}
               >
-                <span style={{ color: r.active ? 'var(--fb-blue)' : 'var(--text-sub)' }}>{r.range}</span>
+                <span style={{ color: r.active ? 'var(--nx-violet)' : 'var(--text-sub)' }}>{r.range}</span>
                 <span style={{ color: r.active ? 'var(--text-base)' : 'var(--text-faint)' }}>{r.limit}</span>
               </div>
             ))}
             <div style={{
-              marginTop: 10, padding: 10, background: 'var(--bg-base)',
-              borderRadius: 8, fontSize: 13, textAlign: 'center', color: 'var(--text-sub)'
+              marginTop: 10, padding: 10, background: 'var(--bg-raised)',
+              borderRadius: 'var(--r-sm)', fontSize: 13, textAlign: 'center', color: 'var(--text-sub)'
             }}>
-              Network size: <strong style={{ color: 'var(--fb-blue)' }}>{networkSize}</strong>
+              Network size: <strong style={{ color: 'var(--nx-violet)' }}>{networkSize}</strong>
               {' '}({friendCount} friends · {followCount} following)
               {networkSize > 0 && (
                 <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-faint)' }}>
@@ -655,7 +941,7 @@ export default function Feed() {
           </div>
 
           <div className="fb-widget">
-            <div className="fb-widget-title">Sponsored</div>
+            <div className="fb-widget-title">Go further</div>
             <p style={{ fontSize: 13, color: 'var(--text-faint)', lineHeight: 1.4 }}>
               Upgrade your plan for more daily questions and priority listing.
             </p>
@@ -685,6 +971,25 @@ export default function Feed() {
           </div>
         </aside>
       </div>
+
+      <Sheet
+        open={!!confirmDeleteId}
+        onClose={() => setConfirmDeleteId(null)}
+        title="Delete this post?"
+      >
+        <p style={{ color: 'var(--text-sub)', marginBottom: 'var(--space-5)' }}>
+          This cannot be undone. The post and its comments will be removed for everyone.
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" className="btn btn-secondary" onClick={() => setConfirmDeleteId(null)}>
+            Keep it
+          </button>
+          <button type="button" className="btn btn-danger" onClick={confirmDelete}>
+            <Trash2 size={16} />
+            Delete
+          </button>
+        </div>
+      </Sheet>
     </div>
   );
 }

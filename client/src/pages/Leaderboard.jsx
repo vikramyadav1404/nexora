@@ -45,7 +45,7 @@ export default function Leaderboard() {
         <div style={{ textAlign: 'center', marginBottom: 36 }}>
           <div style={{
             width: 56, height: 56, margin: '0 auto 12px', borderRadius: '50%',
-            background: '#E7F3FF',
+            background: 'var(--nx-violet-soft)',
             display: 'flex', alignItems: 'center', justifyContent: 'center'
           }}>
             <Trophy size={26} color="#0866FF" />
@@ -58,13 +58,13 @@ export default function Leaderboard() {
           {user && (
             <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 10, marginTop: 16,
-              padding: '10px 18px', background: '#fff',
+              padding: '10px 18px', background: 'var(--bg-surface)',
               borderRadius: 8, boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
             }}>
-              <Star size={15} style={{ color: '#F7B928' }} fill="#F7B928" />
+              <Star size={15} style={{ color: 'var(--gold)' }} fill="#F7B928" />
               <span style={{ fontSize: 14 }}>
                 Your points:{' '}
-                <strong style={{ color: '#0866FF', fontSize: 18 }}>
+                <strong style={{ color: 'var(--nx-violet)', fontSize: 18 }}>
                   {user.points || 0}
                 </strong>
               </span>
@@ -194,7 +194,7 @@ export default function Leaderboard() {
               transfers.map(tx => {
                 const isSender = tx.from?._id === currentUserId;
                 return (
-                  <div key={tx._id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div key={tx._id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0', borderBottom: '1px solid var(--border-soft)' }}>
                     <div style={{ fontSize: 28 }}>{isSender ? '📤' : '📥'}</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 14, fontWeight: 500 }}>
@@ -228,7 +228,7 @@ export default function Leaderboard() {
               { icon: '👎', action: 'Receive a Downvote', points: '-1 pt', desc: 'Someone downvotes your answer', negative: true },
               { icon: '🗑️', action: 'Delete Your Answer', points: '-5 pts', desc: 'Deleting an answer removes the earned points', negative: true }
             ].map(item => (
-              <div key={item.action} style={{ display: 'flex', gap: 14, padding: '16px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <div key={item.action} style={{ display: 'flex', gap: 14, padding: '16px 0', borderBottom: '1px solid var(--border-soft)' }}>
                 <div style={{ fontSize: 28, flexShrink: 0 }}>{item.icon}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>{item.action}</div>
@@ -249,7 +249,7 @@ export default function Leaderboard() {
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>🎓 Expert Badge</span><span style={{ color: 'var(--text-muted)' }}>50+ answers</span></div>
               </div>
             </div>
-            <div style={{ marginTop: 16, padding: 16, background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: 'var(--radius-md)', fontSize: 13, color: 'var(--text-secondary)' }}>
+            <div style={{ marginTop: 16, padding: 16, background: 'var(--nx-violet-soft)', border: '1px solid var(--border-brand)', borderRadius: 'var(--radius-md)', fontSize: 13, color: 'var(--text-secondary)' }}>
               <strong style={{ color: 'var(--primary-light)' }}>💡 Point Transfer Rules</strong><br/>
               You can transfer points to other users, but:<br/>
               • You must have <strong>more than 10 points</strong> to transfer<br/>

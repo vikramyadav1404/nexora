@@ -16,3 +16,13 @@ node_modules/
 server/node_modules/
 client/node_modules/
 .vercel
+
+# local-only DB connection string (never commit)
+server/.db-url.txt
+server/.env.backup
+
+# database backups — contain real email addresses
+server/backups/
+
+# Supabase personal access token — never commit
+server/.supabase-token.txt

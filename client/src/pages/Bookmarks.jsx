@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { Bookmark, Trash2 } from 'lucide-react';
+import { SkeletonList, SkeletonPostCard } from '../components/ui';
 
 export default function Bookmarks() {
   const navigate = useNavigate();
@@ -36,7 +37,7 @@ export default function Bookmarks() {
         </h1>
 
         {loading ? (
-          <div className="spinner spinner-lg" style={{ margin: '40px auto' }} />
+          <SkeletonList count={3} Item={SkeletonPostCard} />
         ) : items.length === 0 ? (
           <div className="empty-state">
             <Bookmark size={40} style={{ margin: '0 auto 12px' }} />

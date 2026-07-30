@@ -28,7 +28,7 @@ function loadRazorpayScript() {
 
 const PLANS = [
   {
-    id: 'free', name: 'Free', price: 0, color: '#6b7280',
+    id: 'free', name: 'Free', price: 0, color: 'var(--text-sub)',
     questions: 1, desc: 'Perfect for getting started',
     features: ['1 question/day', 'Unlimited answers', 'Basic rewards', 'Social feed']
   },
@@ -79,14 +79,11 @@ export default function Subscriptions() {
       const { orderId, amount, keyId, transactionId, isMock } = res.data;
 
       if (isMock) {
-        // Demo mode: auto-verify without Razorpay
+        // Demo mode. Note the server decides this for itself from its Razorpay
+        // config — sending isMock/plan from here would be ignored, so we don't.
         await axios.post('/api/subscriptions/verify-payment', {
           razorpayOrderId: orderId,
-          razorpayPaymentId: `mock_pay_${Date.now()}`,
-          razorpaySignature: 'mock_signature',
-          transactionId,
-          plan: planId,
-          isMock: true
+          transactionId
         });
         toast.success(`You're on ${planId} now (demo payment)`);
         refreshUser();
@@ -109,8 +106,7 @@ export default function Subscriptions() {
               razorpayOrderId: response.razorpay_order_id,
               razorpayPaymentId: response.razorpay_payment_id,
               razorpaySignature: response.razorpay_signature,
-              transactionId,
-              plan: planId
+              transactionId
             });
             toast.success('Payment went through — plan is active');
             refreshUser();
@@ -118,7 +114,7 @@ export default function Subscriptions() {
           } catch { toast.error('Payment verification failed'); }
         },
         prefill: { name: user?.name, email: user?.email },
-        theme: { color: '#0866FF' }
+        theme: { color: 'var(--nx-violet)' }
       };
       const rzp = new window.Razorpay(options);
       rzp.open();
@@ -174,7 +170,7 @@ export default function Subscriptions() {
                     {plan.popular && (
                       <div style={{
                         position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
-                        background: 'var(--gradient-primary)', color: 'white', padding: '4px 16px',
+                        background: 'var(--nx-gradient)', color: 'var(--text-on-accent)', padding: '4px 16px',
                         borderRadius: 'var(--radius-full)', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap'
                       }}>
                         ⭐ Most Popular
@@ -253,9 +249,9 @@ export default function Subscriptions() {
                       <div style={{ fontWeight: 700, fontSize: 16 }}>₹{tx.amount}</div>
                       <span style={{
                         fontSize: 11, padding: '2px 8px', borderRadius: 'var(--radius-full)',
-                        background: tx.status === 'success' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+                        background: tx.status === 'success' ? 'var(--green-muted)' : 'var(--red-muted)',
                         color: tx.status === 'success' ? 'var(--success)' : 'var(--danger)',
-                        border: `1px solid ${tx.status === 'success' ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`
+                        border: `1px solid ${tx.status === 'success' ? 'var(--green-muted)' : 'var(--red-muted)'}`
                       }}>
                         {tx.status.toUpperCase()}
                       </span>

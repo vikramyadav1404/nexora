@@ -57,8 +57,18 @@ app.use(cors({
   credentials: true
 }));
 
+// Razorpay signs the exact request bytes, so the webhook needs the raw buffer.
+// This MUST come before express.json(), which would re-serialize the body and
+// change the bytes the HMAC is computed over.
+app.use('/api/subscriptions/webhook', express.raw({ type: '*/*', limit: '1mb' }));
+
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+// One structured JSON line per request, carrying a request id that sendError
+// reuses — so a user quoting an id can be traced to the exact failure.
+const { requestLogger } = require('./utils/observability');
+app.use(requestLogger);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
   etag: true
@@ -128,6 +138,8 @@ function mountRealRoutes(appInstance) {
   appInstance.use('/api/digests', require('./routes/digests'));
   appInstance.use('/api', require('./routes/safety'));
   appInstance.use('/api/admin', require('./routes/admin'));
+  // Vercel Cron targets; authenticated by CRON_SECRET, not a user session.
+  appInstance.use('/api/cron', require('./routes/cron'));
 }
 
 let bootPromise = null;

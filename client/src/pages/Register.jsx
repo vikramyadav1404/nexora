@@ -59,7 +59,7 @@ export default function Register() {
       <div style={{
         minHeight: '100vh', width: '100%', display: 'flex',
         alignItems: 'center', justifyContent: 'center',
-        padding: 20, background: 'rgba(255,255,255,0.8)'
+        padding: 20, background: 'var(--bg-glass)'
       }}>
         <div className="modal animate-slideUp" style={{ maxWidth: 432, padding: 0, overflow: 'hidden' }}>
           <div style={{
@@ -96,7 +96,7 @@ export default function Register() {
                     onChange={e => setForm({ ...form, firstName: e.target.value })}
                     required
                     autoComplete="given-name"
-                    style={{ background: '#F5F6F7', fontSize: 15, padding: '11px' }}
+                    style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px' }}
                   />
                 </div>
                 <div className="form-group" style={{ marginBottom: 12 }}>
@@ -109,7 +109,7 @@ export default function Register() {
                     onChange={e => setForm({ ...form, lastName: e.target.value })}
                     required
                     autoComplete="family-name"
-                    style={{ background: '#F5F6F7', fontSize: 15, padding: '11px' }}
+                    style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px' }}
                   />
                 </div>
               </div>
@@ -123,7 +123,7 @@ export default function Register() {
                   value={form.middleName}
                   onChange={e => setForm({ ...form, middleName: e.target.value })}
                   autoComplete="additional-name"
-                  style={{ background: '#F5F6F7', fontSize: 15, padding: '11px' }}
+                  style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px' }}
                 />
               </div>
 
@@ -137,7 +137,7 @@ export default function Register() {
                   onChange={e => setForm({ ...form, email: e.target.value })}
                   required
                   autoComplete="email"
-                  style={{ background: '#F5F6F7', fontSize: 15, padding: '11px' }}
+                  style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px' }}
                 />
               </div>
 
@@ -150,7 +150,7 @@ export default function Register() {
                   value={form.phone}
                   onChange={e => setForm({ ...form, phone: e.target.value })}
                   autoComplete="tel"
-                  style={{ background: '#F5F6F7', fontSize: 15, padding: '11px' }}
+                  style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px' }}
                 />
               </div>
 
@@ -167,13 +167,19 @@ export default function Register() {
                       onClick={() => setForm({ ...form, gender: g.id })}
                       style={{
                         padding: '10px 8px',
-                        borderRadius: 6,
-                        border: form.gender === g.id ? '2px solid #0866FF' : '1px solid #ccd0d5',
-                        background: form.gender === g.id ? '#E7F3FF' : '#F5F6F7',
+                        borderRadius: 'var(--r-sm)',
+                        border: form.gender === g.id
+                          ? '2px solid var(--nx-violet)'
+                          : '1px solid var(--border)',
+                        background: form.gender === g.id
+                          ? 'var(--nx-violet-soft)'
+                          : 'var(--bg-raised)',
                         fontWeight: 600,
                         fontSize: 13,
                         cursor: 'pointer',
-                        color: '#050505',
+                        // Was hardcoded near-black, which left these buttons
+                        // white-on-white unreadable in dark mode.
+                        color: form.gender === g.id ? 'var(--nx-violet)' : 'var(--text-base)',
                         fontFamily: 'inherit'
                       }}
                     >
@@ -194,14 +200,14 @@ export default function Register() {
                     onChange={e => setForm({ ...form, password: e.target.value })}
                     required
                     autoComplete="new-password"
-                    style={{ background: '#F5F6F7', fontSize: 15, padding: '11px', paddingRight: 36 }}
+                    style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px', paddingRight: 36 }}
                   />
                   <button
                     type="button"
                     onClick={() => setShowPw(!showPw)}
                     style={{
                       position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                      background: 'none', border: 'none', cursor: 'pointer', color: '#8A8D91',
+                      background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)',
                       display: 'flex', padding: 0
                     }}
                   >
@@ -218,7 +224,7 @@ export default function Register() {
                     onChange={e => setForm({ ...form, confirm: e.target.value })}
                     required
                     autoComplete="new-password"
-                    style={{ background: '#F5F6F7', fontSize: 15, padding: '11px' }}
+                    style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px' }}
                   />
                 </div>
               </div>
@@ -239,7 +245,7 @@ export default function Register() {
                   style={{ minWidth: 194, height: 36, fontSize: 18 }}
                   disabled={loading}
                 >
-                  {loading ? <div className="spinner" style={{ borderTopColor: '#fff' }} /> : 'Sign Up'}
+                  {loading ? <div className="spinner" style={{ borderTopColor: 'var(--text-on-accent)' }} /> : 'Sign Up'}
                 </button>
               </div>
             </form>

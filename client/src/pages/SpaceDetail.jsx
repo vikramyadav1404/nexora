@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from '../services/api';
 import { ArrowLeft } from 'lucide-react';
+import { SkeletonList, SkeletonPostCard } from '../components/ui';
 
 export default function SpaceDetail() {
   const { id } = useParams();
@@ -21,7 +22,7 @@ export default function SpaceDetail() {
   if (loading) {
     return (
       <div className="page-container" style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
-        <div className="spinner spinner-lg" />
+        <SkeletonList count={2} Item={SkeletonPostCard} />
       </div>
     );
   }

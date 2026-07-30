@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
+const { sendError } = require('../utils/respond');
 const {
   shapePost, shapeQuestion, shapeAuthor, AUTHOR_FIELDS
 } = require('../db/helpers');
@@ -68,9 +69,7 @@ router.get('/weekly', protect, async (req, res) => {
       topQuestions,
       generatedAt: new Date().toISOString()
     });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  } catch (err) { sendError(res, err, req, "Could not build your digest"); }
 });
 
 module.exports = router;

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, ChevronUp, ChevronDown, CheckCircle, Send, Trash2, Award, Eye } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { ErrorState, SkeletonList, SkeletonQuestionCard } from '../components/ui';
 
 function VoteButtons({ upvotes, downvotes, onUpvote, onDownvote, currentUserId }) {
   const upvoted = upvotes?.includes(currentUserId);
@@ -41,13 +42,16 @@ export default function QuestionDetail() {
     try {
       const res = await axios.get(`/api/questions/${id}`);
       setQuestion(res.data.question);
-    } catch { toast.error('Question not found'); navigate('/qa'); }
-    finally { setLoading(false); }
+    } catch {
+      // Leave `question` null so the retryable ErrorState renders instead of
+      // bouncing the user back to /qa with only a toast.
+      setQuestion(null);
+    } finally { setLoading(false); }
   };
 
   const handleVoteQuestion = async (type) => {
     try {
-      const res = await axios.post(`/api/questions/${id}/vote`, { type });
+      await axios.post(`/api/questions/${id}/vote`, { type });
       setQuestion(prev => ({
         ...prev,
         upvotes: type === 'up' ? (prev.upvotes.includes(currentUserId)
@@ -62,7 +66,7 @@ export default function QuestionDetail() {
 
   const handleVoteAnswer = async (answerId, type) => {
     try {
-      const res = await axios.post(`/api/answers/${answerId}/vote`, { type });
+      await axios.post(`/api/answers/${answerId}/vote`, { type });
       setQuestion(prev => ({
         ...prev,
         answers: prev.answers.map(a => {
@@ -118,13 +122,28 @@ export default function QuestionDetail() {
     } catch { toast.error('Failed to delete'); }
   };
 
+  // A content-shaped skeleton beats a blocking spinner — the page keeps its
+  // geometry, so nothing jumps when the real answer arrives.
   if (loading) return (
-    <div className="page-container" style={{ padding: '40px 24px' }}>
-      <div className="spinner spinner-lg" style={{ margin: '80px auto' }} />
+    <div className="page-container">
+      <div style={{ maxWidth: 860, margin: '0 auto', padding: '32px 24px' }}>
+        <SkeletonQuestionCard />
+        <SkeletonList count={2} Item={SkeletonQuestionCard} />
+      </div>
     </div>
   );
 
-  if (!question) return null;
+  if (!question) return (
+    <div className="page-container">
+      <div style={{ maxWidth: 860, margin: '0 auto', padding: '32px 24px' }}>
+        <ErrorState
+          title="Question unavailable"
+          description="This question may have been deleted, or we could not reach the server."
+          onRetry={() => { setLoading(true); fetchQuestion(); }}
+        />
+      </div>
+    </div>
+  );
 
   const isAuthor = question.author?._id === currentUserId;
 

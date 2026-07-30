@@ -28,4 +28,19 @@ function getSupabase() {
   return supabase;
 }
 
-module.exports = { getSupabase, isPlaceholderConfig };
+/**
+ * Test-only seam.
+ *
+ * The route modules are CommonJS and reach this file through nested
+ * `require()` calls, which Vitest's module mocking cannot intercept — mocking
+ * `db/supabase` only replaces it for direct importers, so a router still gets
+ * the real client. Because `getSupabase()` memoizes into the module-level
+ * `supabase`, setting it here swaps the client for every consumer at once.
+ *
+ * Only ever called from server/test/**. Pass null to restore normal behaviour.
+ */
+function __setTestClient(client) {
+  supabase = client;
+}
+
+module.exports = { getSupabase, isPlaceholderConfig, __setTestClient };

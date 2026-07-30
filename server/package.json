@@ -10,9 +10,14 @@
     "verify:step-a": "node db/verifySchema.js",
     "verify:schema": "node db/verifySchema.js",
     "smoke": "node scripts/smoke.js",
-    "test:email": "node scripts/testEmail.js"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:email": "node scripts/testEmail.js",
+    "backup": "node scripts/backup.js",
+    "keepalive": "node -e \"require('dotenv').config();fetch((process.env.PUBLIC_API_URL||'http://localhost:5000')+'/api/cron/keepalive').then(r=>r.json()).then(j=>console.log(j)).catch(e=>console.error(e.message))\""
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@supabase/supabase-js": "^2.110.2",
     "bcryptjs": "^2.4.3",
     "compression": "^1.8.1",
@@ -24,9 +29,12 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.2.0",
     "nodemailer": "^6.9.13",
-    "razorpay": "^2.9.2"
+    "razorpay": "^2.9.2",
+    "sharp": "^0.35.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.0"
+    "nodemon": "^3.1.0",
+    "supertest": "^7.2.2",
+    "vitest": "^4.1.10"
   }
 }

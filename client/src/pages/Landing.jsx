@@ -79,7 +79,7 @@ export default function Landing() {
                   onClick={() => setShowPw(!showPw)}
                   style={{
                     position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                    background: 'none', border: 'none', cursor: 'pointer', color: '#8A8D91',
+                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)',
                     display: 'flex', padding: 0
                   }}
                 >

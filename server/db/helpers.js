@@ -222,8 +222,33 @@ function shapeTransaction(t) {
   };
 }
 
+/**
+ * Fetch many authors in ONE query and return an id -> shapedAuthor map.
+ *
+ * Several routes used to do `await db.from('users')...single()` inside a
+ * `.map()`, which is one round trip per row — the feed alone was spending
+ * 40+ requests on a page of 10 posts.
+ */
+async function loadAuthorMap(db, ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  if (!unique.length) return {};
+  const { data } = await db.from('users').select(AUTHOR_FIELDS).in('id', unique);
+  return Object.fromEntries((data || []).map(a => [a.id, shapeAuthor(a)]));
+}
+
+/** Groups rows by a foreign-key column: [{post_id, ...}] -> { postId: [rows] }. */
+function groupBy(rows, key) {
+  const out = {};
+  for (const row of rows || []) {
+    (out[row[key]] ||= []).push(row);
+  }
+  return out;
+}
+
 module.exports = {
   AUTHOR_FIELDS,
+  loadAuthorMap,
+  groupBy,
   publicAssetUrl,
   isToday,
   computeBadges,
