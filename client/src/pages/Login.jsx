@@ -28,17 +28,18 @@ export default function Login() {
   };
 
   return (
-    <div className="fb-landing">
-      <div className="fb-landing-main">
-        <div className="fb-landing-copy">
-          <div className="fb-landing-logo">nexora</div>
-          <p className="fb-landing-tagline">
-            Connect with friends and the world around you on Nexora.
+    <div className="auth-shell">
+      <div className="auth-shell-main">
+        <div className="auth-shell-copy">
+          <div className="auth-shell-logo">nexora</div>
+          <p className="auth-shell-tagline">
+            Welcome back.<br />
+            <span className="auth-shell-accent">Your Spaces are waiting.</span>
           </p>
         </div>
 
         <div>
-          <div className="fb-landing-card animate-slideUp">
+          <div className="auth-shell-card animate-slideUp">
             {error && <div className="alert alert-error">{error}</div>}
 
             <form onSubmit={handleSubmit}>
@@ -91,7 +92,7 @@ export default function Login() {
             </form>
 
             <div style={{ textAlign: 'center', marginTop: 14 }}>
-              <Link to="/forgot-password" style={{ fontSize: 14, color: 'var(--fb-blue)', fontWeight: 500 }}>
+              <Link to="/forgot-password" style={{ fontSize: 14, color: 'var(--nx-violet)', fontWeight: 500 }}>
                 Forgotten password?
               </Link>
             </div>
@@ -110,7 +111,7 @@ export default function Login() {
         </div>
       </div>
 
-      <footer className="fb-landing-footer">
+      <footer className="auth-shell-footer">
         © {new Date().getFullYear()} Nexora
       </footer>
     </div>

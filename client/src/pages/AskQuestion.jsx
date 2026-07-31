@@ -69,7 +69,7 @@ export default function AskQuestion() {
 
         <div style={{ marginBottom: 24 }}>
           <h1 style={{ fontSize: 24, marginBottom: 8, fontWeight: 700 }}>
-            <HelpCircle size={22} style={{ display: 'inline', marginRight: 8, color: 'var(--fb-blue)', verticalAlign: 'middle' }} />
+            <HelpCircle size={22} style={{ display: 'inline', marginRight: 8, color: 'var(--nx-violet)', verticalAlign: 'middle' }} />
             Ask a Question
           </h1>
           <div className="alert alert-info" style={{ marginTop: 12 }}>

@@ -41,14 +41,14 @@ export default function ForgotPassword() {
   };
 
   return (
-    <div className="fb-landing">
+    <div className="auth-shell">
       <div style={{
         flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: '40px 16px', flexDirection: 'column'
       }}>
-        <div className="fb-landing-logo" style={{ fontSize: 40, marginBottom: 24 }}>nexora</div>
+        <div className="auth-shell-logo" style={{ fontSize: 40, marginBottom: 24 }}>nexora</div>
 
-        <div className="fb-landing-card animate-slideUp" style={{ maxWidth: 500 }}>
+        <div className="auth-shell-card animate-slideUp" style={{ maxWidth: 500 }}>
           <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 4 }}>Find Your Account</h1>
           <p style={{ fontSize: 15, color: 'var(--text-sub)', marginBottom: 16, lineHeight: 1.4 }}>
             Please enter your email or mobile number to search for your account.
@@ -58,7 +58,7 @@ export default function ForgotPassword() {
             to="/login"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
-              fontSize: 14, color: 'var(--fb-blue)', marginBottom: 16, fontWeight: 500
+              fontSize: 14, color: 'var(--nx-violet)', marginBottom: 16, fontWeight: 500
             }}
           >
             <ArrowLeft size={14} /> Back to login
@@ -98,7 +98,7 @@ export default function ForgotPassword() {
                 <button
                   type="button"
                   onClick={() => { navigator.clipboard.writeText(newPwResult); toast.success('Copied!'); }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fb-blue)' }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--nx-violet)' }}
                 >
                   <Copy size={16} />
                 </button>
@@ -141,7 +141,7 @@ export default function ForgotPassword() {
               fontSize: 14, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8,
               fontWeight: 600
             }}>
-              <RefreshCw size={15} style={{ color: 'var(--fb-blue)' }} />
+              <RefreshCw size={15} style={{ color: 'var(--nx-violet)' }} />
               Password generator
             </h4>
             <p style={{ fontSize: 13, color: 'var(--text-sub)', marginBottom: 12 }}>

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 export default function Privacy() {
   return (
     <div className="page-container" style={{ maxWidth: 720, margin: '0 auto', padding: '40px 24px' }}>
-      <Link to="/" style={{ color: 'var(--fb-blue)', fontWeight: 600 }}>← Back</Link>
+      <Link to="/" style={{ color: 'var(--nx-violet)', fontWeight: 600 }}>← Back</Link>
       <h1 style={{ fontSize: 28, fontWeight: 800, margin: '16px 0 8px' }}>Privacy Policy</h1>
       <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 24 }}>Last updated: July 2026</p>
 
@@ -45,7 +45,7 @@ export default function Privacy() {
 
         <h2 style={{ fontSize: 18, color: 'var(--text-base)', marginBottom: 8 }}>7. Contact</h2>
         <p>
-          Privacy requests: contact the site operator. See also our <Link to="/terms" style={{ color: 'var(--fb-blue)' }}>Terms of Service</Link>.
+          Privacy requests: contact the site operator. See also our <Link to="/terms" style={{ color: 'var(--nx-violet)' }}>Terms of Service</Link>.
         </p>
       </div>
     </div>

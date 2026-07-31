@@ -55,7 +55,7 @@ export default function Register() {
   };
 
   return (
-    <div className="fb-landing" style={{ justifyContent: 'center' }}>
+    <div className="auth-shell" style={{ justifyContent: 'center' }}>
       <div style={{
         minHeight: '100vh', width: '100%', display: 'flex',
         alignItems: 'center', justifyContent: 'center',
@@ -231,9 +231,9 @@ export default function Register() {
 
               <p style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.4, marginBottom: 14 }}>
                 By clicking Sign Up, you agree to our{' '}
-                <Link to="/terms" style={{ color: 'var(--fb-blue)' }}>Terms</Link>
+                <Link to="/terms" style={{ color: 'var(--nx-violet)' }}>Terms</Link>
                 {' '}and{' '}
-                <Link to="/privacy" style={{ color: 'var(--fb-blue)' }}>Privacy Policy</Link>.
+                <Link to="/privacy" style={{ color: 'var(--nx-violet)' }}>Privacy Policy</Link>.
                 Next you&apos;ll verify email and choose interests for a personalized feed.
               </p>
 
@@ -251,7 +251,7 @@ export default function Register() {
             </form>
 
             <p style={{ textAlign: 'center', marginTop: 16, fontSize: 14 }}>
-              <Link to="/login" style={{ color: 'var(--fb-blue)', fontWeight: 500 }}>
+              <Link to="/login" style={{ color: 'var(--nx-violet)', fontWeight: 500 }}>
                 Already have an account?
               </Link>
             </p>

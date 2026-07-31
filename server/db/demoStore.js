@@ -96,6 +96,143 @@ function bumpChallenge(user, metric, amount = 1) {
   user.challengeProgress[metric] = (user.challengeProgress[metric] || 0) + amount;
 }
 
+/**
+ * Replies written for the three interests the demo user follows, indexed to
+ * match SEED_POSTS. An empty demo reads as a broken app rather than a new one,
+ * so the seeded feed arrives with conversation already on it.
+ */
+const SEED_COMMENTS = {
+  technology: [
+    ['Two years in on TS and the refactors alone have paid for it.', 'Types are only as good as the boundaries you draw, though.'],
+    ['Postgres and Express. Boring, and it ships.'],
+    ['Both. Fundamentals win right up until the tool removes the problem.']
+  ],
+  music: [
+    ['Currently on loop and I am not proud of it.'],
+    ['Saving this for tomorrow morning, thank you.', 'Any chance of a longer version?'],
+    ['Small venue, terrible sound, best night of the year.']
+  ],
+  gaming: [
+    ['Finished it last weekend. The last two hours are worth the first twenty.'],
+    ['Mouse and keyboard, and I will not be taking questions.'],
+    ['Backlog is at 40 and I keep buying more.']
+  ]
+};
+
+/**
+ * Answers on the seeded questions. The first entry on each question is the
+ * accepted one — it exercises the resolved-thread UI that would otherwise
+ * never appear in a fresh demo.
+ */
+const SEED_ANSWERS = {
+  react: [
+    { interest: 'technology', body: 'Group by feature, not by file type. `src/features/feed/` holding its own components, hooks and API calls beats a global `components/` folder the moment the app outgrows a weekend. Keep a `components/ui/` for genuinely shared primitives and nothing else.', upvotes: 9 },
+    { interest: 'education', body: 'Whatever you pick, put the routing table in one file and lazy-load every route from it. It keeps the entry bundle small and gives you one place to read the whole app.', upvotes: 4 }
+  ],
+  warmup: [
+    { interest: 'sports', body: 'Ten minutes, and none of it static. Light jog, then leg swings, lunges with a twist, and finish with three progressive sprints. Static stretching before kickoff measurably reduces power output.', upvotes: 12 },
+    { interest: 'fitness', body: 'Add ankle and hip mobility work if you play on hard ground. Most non-contact injuries I see start there.', upvotes: 6 }
+  ],
+  burnout: [
+    { interest: 'business', body: 'Cut the scope, not the sleep. A feature you ship in three weeks rested beats one you ship in two and then spend a month fixing.', upvotes: 15 }
+  ]
+};
+
+/** Deterministic engagement so demo runs and screenshots stay identical. */
+function seedEngagement(demoId, now) {
+  const creators = new Map();
+  for (const u of store.users.values()) {
+    if (u.isCreator) creators.set(u.creatorInterest, u);
+  }
+  const creatorIds = [...creators.values()].map(u => u.id);
+  const likerPool = [...creatorIds, demoId];
+
+  // Vary creator standing so the leaderboard has an actual ranking on it
+  creatorIds.forEach((id, i) => {
+    const u = store.users.get(id);
+    u.points = 240 - i * 13;
+    u.totalAnswers = 18 - (i % 7);
+    u.badges = i < 3 ? ['contributor', 'gold'] : i < 8 ? ['contributor', 'silver'] : ['contributor'];
+  });
+
+  // Likes and replies on every seeded post
+  let n = 0;
+  for (const post of store.posts.values()) {
+    if (!post.seed_key) continue;
+    const [, interest, idxRaw] = post.seed_key.split(':');
+    const idx = Number(idxRaw);
+
+    const likeCount = 4 + ((n * 7 + idx * 5) % 19);
+    store.postLikes.set(post.id, new Set(likerPool.slice(0, Math.min(likeCount, likerPool.length))));
+    post.shares = 1 + ((n * 3) % 9);
+
+    const bodies = SEED_COMMENTS[interest]?.[idx] || [];
+    store.postComments.set(post.id, bodies.map((content, ci) => ({
+      id: randomUUID(),
+      author_id: creatorIds[(n + ci + 1) % creatorIds.length],
+      content,
+      created_at: new Date(Date.now() - (ci + 1) * 1800000).toISOString()
+    })));
+    n += 1;
+  }
+
+  // A resolved question the demo user did not write, so the Q&A list has
+  // both an open and an answered thread in it
+  const q3 = randomUUID();
+  store.questions.set(q3, {
+    id: q3,
+    author_id: creators.get('business')?.id || demoId,
+    title: 'How do you keep shipping without burning out?',
+    body: 'Six months into a side project alongside a full-time job. Output is fine, energy is not. What actually worked for you?',
+    tags: ['business', 'productivity'],
+    interest: 'business',
+    upvotes: creatorIds.slice(0, 7),
+    downvotes: [],
+    answers: [],
+    views: 143,
+    isResolved: true,
+    createdAt: new Date(Date.now() - 2 * 86400000).toISOString()
+  });
+
+  const questions = [...store.questions.values()];
+  const byTitle = (needle) => questions.find(q => q.title.includes(needle));
+  const targets = [
+    [byTitle('React app with Vite'), SEED_ANSWERS.react],
+    [byTitle('warm-up'), SEED_ANSWERS.warmup],
+    [store.questions.get(q3), SEED_ANSWERS.burnout]
+  ];
+
+  for (const [question, answers] of targets) {
+    if (!question) continue;
+    question.answers = answers.map((a, ai) => ({
+      id: randomUUID(),
+      body: a.body,
+      author_id: creators.get(a.interest)?.id || creatorIds[ai],
+      upvotes: creatorIds.slice(0, a.upvotes),
+      downvotes: [],
+      isAccepted: ai === 0 && question.isResolved,
+      createdAt: new Date(Date.now() - (answers.length - ai) * 3600000).toISOString()
+    }));
+    question.views = question.views || 0;
+  }
+
+  // The React question is the one the demo user can still accept an answer on
+  const react = byTitle('React app with Vite');
+  if (react) {
+    react.views = 89;
+    react.upvotes = creatorIds.slice(0, 5);
+  }
+  const warmup = byTitle('warm-up');
+  if (warmup) {
+    warmup.isResolved = true;
+    warmup.views = 61;
+    warmup.upvotes = creatorIds.slice(0, 3);
+    if (warmup.answers[0]) warmup.answers[0].isAccepted = true;
+  }
+
+  store.users.get(demoId).createdAt = now;
+}
+
 async function initDemoStore() {
   if (store.ready) return store;
 
@@ -262,6 +399,8 @@ async function initDemoStore() {
     .slice(0, 3)
     .map(u => u.id);
   demoUser.friends = friendIds;
+
+  seedEngagement(demoId, now);
 
   store.ready = true;
   console.log('Demo mode ready');

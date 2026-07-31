@@ -33,7 +33,7 @@ export default function Bookmarks() {
     <div className="page-container">
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '24px 16px' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Bookmark size={22} color="var(--fb-blue)" /> Saved
+          <Bookmark size={22} color="var(--nx-violet)" /> Saved
         </h1>
 
         {loading ? (

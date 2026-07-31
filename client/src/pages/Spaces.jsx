@@ -4,6 +4,8 @@ import axios from '../services/api';
 import { Layers } from 'lucide-react';
 import { EmptyState, ErrorState, SkeletonList, SkeletonQuestionCard } from '../components/ui';
 
+const plural = (n, word) => `${n || 0} ${n === 1 ? word : `${word}s`}`;
+
 export default function Spaces() {
   const navigate = useNavigate();
   const [spaces, setSpaces] = useState([]);
@@ -26,7 +28,7 @@ export default function Spaces() {
     <div className="page-container">
       <div style={{ maxWidth: 960, margin: '0 auto', padding: '24px 16px' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Layers size={22} color="var(--fb-blue)" /> Spaces
+          <Layers size={22} color="var(--nx-violet)" /> Spaces
         </h1>
         <p style={{ color: 'var(--text-sub)', marginBottom: 24 }}>
           Interest communities — posts, questions, and people in each topic.
@@ -55,7 +57,7 @@ export default function Spaces() {
                 <div style={{ fontSize: 28, marginBottom: 8 }}>{s.emoji}</div>
                 <h3 style={{ marginBottom: 6 }}>{s.label}</h3>
                 <p style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-                  {s.memberCount || 0} members · {s.postCount || 0} posts · {s.questionCount || 0} Qs
+                  {plural(s.memberCount, 'member')} · {plural(s.postCount, 'post')} · {plural(s.questionCount, 'question')}
                 </p>
               </button>
             ))}

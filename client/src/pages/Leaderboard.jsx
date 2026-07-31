@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
-import { Trophy, Star, ArrowRight, Gift, Search } from 'lucide-react';
+import { Trophy, Star, ArrowRight, Gift } from 'lucide-react';
 
 export default function Leaderboard() {
   const { user } = useAuth();
@@ -135,7 +135,7 @@ export default function Leaderboard() {
                   return (
                     <div key={person._id}
                       className="leaderboard-item"
-                      style={{ cursor: 'pointer', background: isCurrentUser ? 'var(--fb-blue-soft)' : 'transparent', borderRadius: 'var(--radius-md)' }}
+                      style={{ cursor: 'pointer', background: isCurrentUser ? 'var(--nx-violet-soft)' : 'transparent', borderRadius: 'var(--radius-md)' }}
                       onClick={() => navigate(`/profile/${person._id}`)}>
                       {/* Rank */}
                       <div className={`rank-number ${i < 3 ? 'gold-rank' : ''}`}
@@ -155,7 +155,7 @@ export default function Leaderboard() {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>
                           {person.name}
-                          {isCurrentUser && <span style={{ fontSize: 11, color: 'var(--fb-blue)', background: 'var(--fb-blue-soft)', padding: '1px 8px', borderRadius: 'var(--radius-full)' }}>You</span>}
+                          {isCurrentUser && <span style={{ fontSize: 11, color: 'var(--nx-violet)', background: 'var(--nx-violet-soft)', padding: '1px 8px', borderRadius: 'var(--radius-full)' }}>You</span>}
                         </div>
                         <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
                           {person.badges?.map(b => (

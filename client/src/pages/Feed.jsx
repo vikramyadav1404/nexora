@@ -127,7 +127,7 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onS
           <div className="likes-count">
             {likeCount > 0 && (
               <>
-                <span className="fb-reaction-dot" style={{ background: 'var(--red)' }}>
+                <span className="reaction-dot" style={{ background: 'var(--red)' }}>
                   <Heart size={10} fill="currentColor" strokeWidth={0} />
                 </span>
                 {likeCount}
@@ -603,33 +603,33 @@ export default function Feed() {
       <div className="feed-layout">
         {/* ── Left sidebar ── */}
         <aside className="sidebar-left">
-          <button type="button" className="fb-side-link" onClick={() => navigate(`/profile/${userId}`)}>
+          <button type="button" className="side-link" onClick={() => navigate(`/profile/${userId}`)}>
             <Avatar src={user?.avatar} name={user?.name} size={36} />
             <span style={{ fontWeight: 600 }}>{user?.name}</span>
           </button>
 
-          <button type="button" className="fb-side-link active" onClick={() => navigate('/feed')}>
-            <span className="fb-side-icon"><Home size={18} /></span>
+          <button type="button" className="side-link active" onClick={() => navigate('/feed')}>
+            <span className="side-icon"><Home size={18} /></span>
             {t.feed || 'Home'}
           </button>
-          <button type="button" className="fb-side-link" onClick={() => navigate('/qa')}>
-            <span className="fb-side-icon"><HelpCircle size={18} /></span>
+          <button type="button" className="side-link" onClick={() => navigate('/qa')}>
+            <span className="side-icon"><HelpCircle size={18} /></span>
             {t.qa || 'Q&A'}
           </button>
-          <button type="button" className="fb-side-link" onClick={() => navigate('/leaderboard')}>
-            <span className="fb-side-icon gold"><Trophy size={18} /></span>
+          <button type="button" className="side-link" onClick={() => navigate('/leaderboard')}>
+            <span className="side-icon gold"><Trophy size={18} /></span>
             {t.leaderboard || 'Leaderboard'}
           </button>
-          <button type="button" className="fb-side-link" onClick={() => navigate('/subscriptions')}>
-            <span className="fb-side-icon green"><CreditCard size={18} /></span>
+          <button type="button" className="side-link" onClick={() => navigate('/subscriptions')}>
+            <span className="side-icon green"><CreditCard size={18} /></span>
             {t.subscriptions || 'Subscriptions'}
           </button>
-          <button type="button" className="fb-side-link" onClick={() => navigate('/settings')}>
-            <span className="fb-side-icon"><Settings size={18} /></span>
+          <button type="button" className="side-link" onClick={() => navigate('/settings')}>
+            <span className="side-icon"><Settings size={18} /></span>
             {t.settings || 'Settings'}
           </button>
-          <button type="button" className="fb-side-link" onClick={() => navigate(`/profile/${userId}`)}>
-            <span className="fb-side-icon"><User size={18} /></span>
+          <button type="button" className="side-link" onClick={() => navigate(`/profile/${userId}`)}>
+            <span className="side-icon"><User size={18} /></span>
             {t.profile || 'Profile'}
           </button>
 
@@ -637,8 +637,8 @@ export default function Feed() {
           <div style={{ padding: '4px 12px', fontSize: 13, color: 'var(--text-faint)', fontWeight: 600 }}>
             Your shortcuts
           </div>
-          <button type="button" className="fb-side-link" onClick={() => navigate('/ask')}>
-            <span className="fb-side-icon"><HelpCircle size={18} /></span>
+          <button type="button" className="side-link" onClick={() => navigate('/ask')}>
+            <span className="side-icon"><HelpCircle size={18} /></span>
             Ask a question
           </button>
         </aside>
@@ -646,7 +646,7 @@ export default function Feed() {
         {/* ── Center feed ── */}
         <main style={{ minWidth: 0 }}>
           {feedInterests?.length > 0 && (
-            <div className="fb-widget" style={{ marginBottom: 12, padding: '12px 14px' }}>
+            <div className="widget" style={{ marginBottom: 12, padding: '12px 14px' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-sub)', marginBottom: 8 }}>
                 Your interests · personalized home
               </div>
@@ -662,7 +662,7 @@ export default function Feed() {
 
           {/* Composer */}
           <div
-            className={`fb-composer composer-dropzone ${dragging ? 'is-dragging' : ''}`}
+            className={`composer composer-dropzone ${dragging ? 'is-dragging' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
             onDragLeave={() => setDragging(false)}
             onDrop={(e) => {
@@ -683,7 +683,7 @@ export default function Feed() {
               </div>
             ) : (
               <>
-                <div className="fb-composer-top">
+                <div className="composer-top">
                   <Avatar src={user?.avatar} name={user?.name} size={40} />
                   {composerOpen ? (
                     <textarea
@@ -699,7 +699,7 @@ export default function Feed() {
                       }}
                     />
                   ) : (
-                    <button type="button" className="fb-composer-input" onClick={() => setComposerOpen(true)}>
+                    <button type="button" className="composer-input" onClick={() => setComposerOpen(true)}>
                       What&apos;s on your mind, {user?.name?.split(' ')[0]}?
                     </button>
                   )}
@@ -758,8 +758,8 @@ export default function Feed() {
                   </div>
                 )}
 
-                <div className="fb-composer-divider" />
-                <div className="fb-composer-actions">
+                <div className="composer-divider" />
+                <div className="composer-actions">
                   <input
                     ref={fileRef}
                     type="file"
@@ -774,7 +774,7 @@ export default function Feed() {
                   />
                   <button
                     type="button"
-                    className="fb-composer-action"
+                    className="composer-action"
                     onClick={() => fileRef.current?.click()}
                     disabled={media.length >= MAX_MEDIA}
                   >
@@ -783,7 +783,7 @@ export default function Feed() {
                   </button>
                   <button
                     type="button"
-                    className="fb-composer-action"
+                    className="composer-action"
                     onClick={() => setComposerOpen(true)}
                   >
                     <MessageCircle size={20} style={{ color: 'var(--nx-violet)' }} />
@@ -853,8 +853,8 @@ export default function Feed() {
         {/* ── Right sidebar ── */}
         <aside className="sidebar-right">
           {suggestions.length > 0 && (
-            <div className="fb-widget">
-              <div className="fb-widget-title">People you may like</div>
+            <div className="widget">
+              <div className="widget-title">People you may like</div>
               {suggestions.slice(0, 6).map((s) => {
                 const sid = s._id || s.id;
                 return (
@@ -902,8 +902,8 @@ export default function Feed() {
             </div>
           )}
 
-          <div className="fb-widget">
-            <div className="fb-widget-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className="widget">
+            <div className="widget-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <BarChart2 size={16} />
               Daily post limit
             </div>
@@ -940,8 +940,8 @@ export default function Feed() {
             </div>
           </div>
 
-          <div className="fb-widget">
-            <div className="fb-widget-title">Go further</div>
+          <div className="widget">
+            <div className="widget-title">Go further</div>
             <p style={{ fontSize: 13, color: 'var(--text-faint)', lineHeight: 1.4 }}>
               Upgrade your plan for more daily questions and priority listing.
             </p>
@@ -955,17 +955,17 @@ export default function Feed() {
             </button>
           </div>
 
-          <div className="fb-widget">
-            <div className="fb-widget-title">Contacts</div>
+          <div className="widget">
+            <div className="widget-title">Contacts</div>
             <p style={{ fontSize: 13, color: 'var(--text-faint)', marginBottom: 10 }}>
               Find people and grow your network.
             </p>
-            <Link to="/settings" className="fb-side-link" style={{ padding: '6px 0' }}>
-              <span className="fb-side-icon"><Users size={16} /></span>
+            <Link to="/settings" className="side-link" style={{ padding: '6px 0' }}>
+              <span className="side-icon"><Users size={16} /></span>
               Find friends
             </Link>
-            <Link to="/leaderboard" className="fb-side-link" style={{ padding: '6px 0' }}>
-              <span className="fb-side-icon gold"><Trophy size={16} /></span>
+            <Link to="/leaderboard" className="side-link" style={{ padding: '6px 0' }}>
+              <span className="side-icon gold"><Trophy size={16} /></span>
               Top contributors
             </Link>
           </div>

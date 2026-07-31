@@ -1,16 +1,42 @@
-# React + Vite
+# Nexora — client
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 SPA built with Vite. See the [root README](../README.md) for the full project.
 
-Currently, two official plugins are available:
+```bash
+npm install
+npm run dev      # http://127.0.0.1:5173, proxies /api to :5000
+npm run check    # oxlint + production build
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Layout
 
-## React Compiler
+```
+src/
+  components/ui/   Avatar, Sheet, Lightbox, SmartImage, Skeleton…
+  contexts/        AuthContext — the single source of session truth
+  hooks/           useInfiniteScroll, useOptimistic, usePullToRefresh…
+  pages/           22 route components, all React.lazy code-split
+  services/        api.js (axios + JWT interceptor), realtime.js
+  styles/          index.css (tokens + components), primitives.css
+```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Notes
 
-## Expanding the Oxlint configuration
+**No CSS framework.** The design system is hand-written CSS driven by custom properties.
+Light/dark theming switches on a `data-theme` attribute, resolved by an inline script in
+`index.html` **before first paint** — doing it in a React effect flashed white on every
+cold load for dark-mode users.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+**Every route past login is lazy-loaded.** `App.jsx` is the only eager bundle.
+
+**Auth token** lives in `localStorage` as `nexora_token`. A 401 from any request clears it
+and dispatches a `nexora:logout` event that `AuthContext` listens for.
+
+## Environment
+
+Copy `.env.example` → `.env`:
+
+- `VITE_API_URL` — API origin (omit in dev; Vite proxies instead)
+- `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` — optional, enables Realtime notifications
+
+Never put `SUPABASE_SERVICE_ROLE_KEY` here. The client gets the `anon` key only.

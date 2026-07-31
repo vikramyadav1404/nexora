@@ -100,7 +100,7 @@ export default function SpaceDetail() {
         {tab === 'members' && (
           <div className="glass-card" style={{ padding: 12 }}>
             {members.map(m => (
-              <Link key={m.id} to={`/profile/${m.id}`} className="fb-side-link">
+              <Link key={m.id} to={`/profile/${m.id}`} className="side-link">
                 <div className="avatar-placeholder" style={{ width: 36, height: 36 }}>{m.name?.[0]}</div>
                 <div>
                   <div style={{ fontWeight: 600 }}>{m.name}</div>

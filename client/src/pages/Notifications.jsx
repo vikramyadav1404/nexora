@@ -43,7 +43,7 @@ export default function Notifications() {
       <div style={{ maxWidth: 640, margin: '0 auto', padding: '24px 16px' }}>
         <div className="section-header">
           <h1 style={{ fontSize: 24, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Bell size={22} color="var(--fb-blue)" /> Notifications
+            <Bell size={22} color="var(--nx-violet)" /> Notifications
           </h1>
           <button type="button" className="btn btn-secondary btn-sm" onClick={markAll}>
             <CheckCheck size={16} /> Mark all read
@@ -68,7 +68,7 @@ export default function Notifications() {
                 style={{
                   width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer',
                   padding: '14px 16px', borderBottom: '1px solid var(--border-soft)',
-                  background: n.read ? 'transparent' : 'var(--fb-blue-soft)',
+                  background: n.read ? 'transparent' : 'var(--nx-violet-soft)',
                   fontFamily: 'inherit'
                 }}
               >

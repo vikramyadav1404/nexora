@@ -79,7 +79,7 @@ export default function SearchPage() {
                 <Link
                   key={p.id}
                   to={`/profile/${p.id}`}
-                  className="fb-side-link"
+                  className="side-link"
                   style={{ padding: '10px 8px' }}
                 >
                   <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>

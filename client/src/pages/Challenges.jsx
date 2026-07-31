@@ -49,7 +49,7 @@ export default function Challenges() {
     <div className="page-container">
       <div style={{ maxWidth: 700, margin: '0 auto', padding: '24px 16px' }}>
         <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Target size={22} color="var(--fb-blue)" /> Challenges
+          <Target size={22} color="var(--nx-violet)" /> Challenges
         </h1>
         <p style={{ color: 'var(--text-sub)', marginBottom: 20 }}>
           Build habits. Earn bonus points. Climb the leaderboard.
@@ -82,7 +82,7 @@ export default function Challenges() {
               }}>
                 <div style={{
                   height: '100%', width: `${c.percent}%`,
-                  background: c.completed ? 'var(--green)' : 'var(--fb-blue)',
+                  background: c.completed ? 'var(--green)' : 'var(--nx-violet)',
                   borderRadius: 99
                 }} />
               </div>
