@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import axios from '../services/api';
+import axios, { setAccessToken, getAccessToken, refreshAccessToken } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -10,43 +10,49 @@ export function useAuth() {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(() => localStorage.getItem('nexora_token'));
+  const [token, setTokenState] = useState(null);
 
-  useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common.Authorization = `Bearer ${token}`;
-    } else {
-      delete axios.defaults.headers.common.Authorization;
-    }
-  }, [token]);
-
-  useEffect(() => {
-    if (token) fetchMe();
-    else setLoading(false);
-    // only on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const applyToken = useCallback((t) => {
+    setAccessToken(t);
+    setTokenState(t || null);
   }, []);
 
-  async function fetchMe() {
-    try {
-      const res = await axios.get('/api/auth/me');
-      setUser(res.data.user);
-    } catch {
-      localStorage.removeItem('nexora_token');
-      setToken(null);
-      setUser(null);
-      delete axios.defaults.headers.common.Authorization;
-    } finally {
-      setLoading(false);
-    }
-  }
+  /*
+   * Bootstrap.
+   *
+   * The access token is in memory, so a reload starts with none. What survives
+   * is the httpOnly refresh cookie, which page script cannot read — so instead
+   * of reading a token we ask the server for a new one. A 401 here simply means
+   * no valid session, which is the ordinary logged-out case, not an error.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await refreshAccessToken();
+        if (cancelled) return;
+        const res = await axios.get('/api/auth/me');
+        if (cancelled) return;
+        setTokenState(getAccessToken());
+        setUser(res.data.user);
+      } catch {
+        if (!cancelled) {
+          applyToken(null);
+          setUser(null);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [applyToken]);
 
   async function login(email, password) {
     const res = await axios.post('/api/auth/login', { email, password });
     const { token: t, user: u } = res.data;
-    localStorage.setItem('nexora_token', t);
-    setToken(t);
-    axios.defaults.headers.common.Authorization = `Bearer ${t}`;
+    applyToken(t);
     setUser(u);
     return u;
   }
@@ -81,9 +87,7 @@ export function AuthProvider({ children }) {
     });
 
     const { token: t, user: u } = res.data;
-    localStorage.setItem('nexora_token', t);
-    setToken(t);
-    axios.defaults.headers.common.Authorization = `Bearer ${t}`;
+    applyToken(t);
     setUser(u);
 
     return {
@@ -95,33 +99,49 @@ export function AuthProvider({ children }) {
     };
   }
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('nexora_token');
-    setToken(null);
+  const logout = useCallback(async () => {
+    // Tell the server first so the refresh token is revoked rather than left
+    // valid for 30 days. Local state is cleared either way.
+    try {
+      await axios.post('/api/auth/logout');
+    } catch {
+      /* already gone, or offline — clearing locally is still correct */
+    }
+    setAccessToken(null);
+    setTokenState(null);
     setUser(null);
-    delete axios.defaults.headers.common.Authorization;
   }, []);
 
-  // api interceptor fires this when the token is dead
+  // The api interceptor fires this when refresh fails and the session is over.
   useEffect(() => {
-    const onLogout = () => logout();
+    const onLogout = () => {
+      setAccessToken(null);
+      setTokenState(null);
+      setUser(null);
+    };
     window.addEventListener('nexora:logout', onLogout);
     return () => window.removeEventListener('nexora:logout', onLogout);
-  }, [logout]);
+  }, []);
 
   const updateUser = useCallback((updates) => {
     setUser((prev) => (prev ? { ...prev, ...updates } : prev));
   }, []);
 
-  async function refreshUser() {
-    if (!localStorage.getItem('nexora_token')) return;
+  const refreshUser = useCallback(async () => {
+    if (!getAccessToken()) return;
     try {
       const res = await axios.get('/api/auth/me');
       setUser(res.data.user);
     } catch (err) {
-      if (err.response?.status === 401 || err.response?.status === 403) logout();
+      // A 401 has already been through the interceptor's refresh-and-retry, so
+      // reaching here means the session really is finished.
+      if (err.response?.status === 403) {
+        setAccessToken(null);
+        setTokenState(null);
+        setUser(null);
+      }
     }
-  }
+  }, []);
 
   return (
     <AuthContext.Provider

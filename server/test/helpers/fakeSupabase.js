@@ -11,13 +11,40 @@
  * doesn't support, add it here rather than reaching for a live database.
  */
 
+function compare(row, op, col, val) {
+  if (op === 'eq') return row[col] === val;
+  if (op === 'neq') return row[col] !== val;
+  if (op === 'in') return val.includes(row[col]);
+  // PostgREST `.is(col, null)` means IS NULL, which is not the same as === null:
+  // an absent property must match too, since the column simply has no value.
+  if (op === 'is') return val === null ? row[col] == null : row[col] === val;
+  if (op === 'lt') return row[col] != null && row[col] < val;
+  if (op === 'gt') return row[col] != null && row[col] > val;
+  if (op === 'or') return val.some(([o, c, v]) => compare(row, o, c, v));
+  return true;
+}
+
 function matches(row, filters) {
-  return filters.every(([op, col, val]) => {
-    if (op === 'eq') return row[col] === val;
-    if (op === 'neq') return row[col] !== val;
-    if (op === 'in') return val.includes(row[col]);
-    return true;
-  });
+  return filters.every(([op, col, val]) => compare(row, op, col, val));
+}
+
+/**
+ * Parse the PostgREST `.or()` string form, e.g.
+ *   "expires_at.lt.2026-01-01,revoked_at.lt.2025-12-01"
+ *
+ * Only the operators this codebase actually passes to `.or()` are handled.
+ * Previously `.or()` was a no-op returning `this`, which silently matched every
+ * row — harmless on a select, but on the DELETE in sweepRefreshTokens it would
+ * have wiped the table and looked like a pass.
+ */
+function parseOr(expr) {
+  return String(expr)
+    .split(',')
+    .map(part => {
+      const [col, op, ...rest] = part.split('.');
+      return [op, col, rest.join('.')];
+    })
+    .filter(([op]) => op);
 }
 
 class Query {
@@ -35,7 +62,10 @@ class Query {
   eq(col, val) { this.filters.push(['eq', col, val]); return this; }
   neq(col, val) { this.filters.push(['neq', col, val]); return this; }
   in(col, val) { this.filters.push(['in', col, val]); return this; }
-  or() { return this; }
+  is(col, val) { this.filters.push(['is', col, val]); return this; }
+  lt(col, val) { this.filters.push(['lt', col, val]); return this; }
+  gt(col, val) { this.filters.push(['gt', col, val]); return this; }
+  or(expr) { this.filters.push(['or', null, parseOr(expr)]); return this; }
   ilike() { return this; }
   limit(n) { this._limit = n; return this; }
 

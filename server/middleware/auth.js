@@ -23,6 +23,22 @@ async function protect(req, res, next) {
       return res.status(401).json({ message: 'Token invalid or expired' });
     }
 
+    /*
+     * A half-authenticated token must be useless here.
+     *
+     * Login with MFA enabled issues a short-lived token carrying
+     * typ: 'mfa_pending'. It proves the password was correct and nothing more.
+     * Only /api/auth/mfa/verify accepts it — every route reached through
+     * `protect` must not.
+     *
+     * The check is default-deny by placement: it lives in the middleware every
+     * protected route already uses, so a route added later is covered without
+     * anyone remembering to add it to a list.
+     */
+    if (decoded.typ && decoded.typ !== 'access') {
+      return res.status(401).json({ message: 'Additional verification required' });
+    }
+
     const { data: row, error } = await getSupabase()
       .from('users')
       .select('*')

@@ -3,6 +3,8 @@
   "outputDirectory": "dist",
   "framework": "vite",
   "rewrites": [
+    { "source": "/api/:path*", "destination": "https://nexora-api-beta.vercel.app/api/:path*" },
+    { "source": "/uploads/:path*", "destination": "https://nexora-api-beta.vercel.app/uploads/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }

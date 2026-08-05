@@ -65,6 +65,9 @@ app.use('/api/subscriptions/webhook', express.raw({ type: '*/*', limit: '1mb' })
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+// The refresh token arrives as an httpOnly cookie; Express 4 does not parse
+// cookies on its own, so req.cookies is undefined without this.
+app.use(require('cookie-parser')());
 
 // One structured JSON line per request, carrying a request id that sendError
 // reuses — so a user quoting an id can be traced to the exact failure.

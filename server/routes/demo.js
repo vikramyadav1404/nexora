@@ -15,8 +15,37 @@ const { randomUUID } = require('crypto');
 
 const router = express.Router();
 
+/**
+ * Demo sessions mirror the real scheme so the client needs no special case:
+ * a 15-minute access token plus a refresh cookie.
+ *
+ * The refresh side is deliberately thinner than the real one. There is no
+ * database to store hashes in, so the cookie holds a signed JWT rather than an
+ * opaque handle, and rotation issues a new one without a family to revoke.
+ * Reuse detection is not reproducible without persistence — demo mode is for
+ * exercising the UI, not the security properties, and the real tests cover
+ * those against a real store.
+ */
+const DEMO_REFRESH_COOKIE = 'nexora_refresh';
+const demoSecret = () => process.env.JWT_SECRET || 'demo_secret';
+
 const generateToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET || 'demo_secret', { expiresIn: '7d' });
+  jwt.sign({ id, typ: 'access' }, demoSecret(), {
+    expiresIn: process.env.ACCESS_TOKEN_TTL || '15m'
+  });
+
+const generateDemoRefresh = (id) =>
+  jwt.sign({ id, typ: 'refresh' }, demoSecret(), { expiresIn: '30d' });
+
+function setDemoRefreshCookie(res, id) {
+  res.cookie(DEMO_REFRESH_COOKIE, generateDemoRefresh(id), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    path: '/api/auth',
+    maxAge: 30 * 24 * 60 * 60 * 1000
+  });
+}
 
 const protectDemo = async (req, res, next) => {
   try {
@@ -79,6 +108,7 @@ router.post('/auth/register', async (req, res) => {
     };
     store.users.set(id, user);
     const token = generateToken(id);
+    setDemoRefreshCookie(res, id);
     res.status(201).json({ token, user: shapeDemoUser(user) });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -102,10 +132,34 @@ router.post('/auth/login', async (req, res) => {
       return u ? { _id: u.id, id: u.id, name: u.name, avatar: u.avatar, points: u.points } : { _id: id, id };
     });
     const token = generateToken(user.id);
+    setDemoRefreshCookie(res, user.id);
     res.json({ token, user: shapeDemoUser(user, { friends }) });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
+});
+
+router.post('/auth/refresh', async (req, res) => {
+  await initDemoStore();
+  const presented = req.cookies?.[DEMO_REFRESH_COOKIE];
+  if (!presented) return res.status(401).json({ message: 'No refresh token' });
+
+  try {
+    const decoded = jwt.verify(presented, demoSecret());
+    if (decoded.typ !== 'refresh') throw new Error('wrong token type');
+    if (!findUserById(decoded.id)) throw new Error('unknown user');
+
+    setDemoRefreshCookie(res, decoded.id);
+    res.json({ token: generateToken(decoded.id) });
+  } catch {
+    res.clearCookie(DEMO_REFRESH_COOKIE, { path: '/api/auth' });
+    res.status(401).json({ message: 'Session expired' });
+  }
+});
+
+router.post('/auth/logout', (req, res) => {
+  res.clearCookie(DEMO_REFRESH_COOKIE, { path: '/api/auth' });
+  res.json({ message: 'Logged out' });
 });
 
 router.get('/auth/me', protectDemo, async (req, res) => {

@@ -211,12 +211,19 @@ async function sweepOrphanedMedia() {
 router.post('/daily', async (req, res) => {
   if (!authorize(req, res)) return;
 
-  const result = { ok: true, transactions: null, rateLimits: null, orphanedMedia: null, errors: [] };
+  const result = {
+    ok: true,
+    transactions: null, rateLimits: null, orphanedMedia: null, refreshTokens: null,
+    errors: []
+  };
 
   for (const [name, job] of [
     ['transactions', sweepTransactions],
     ['rateLimits', sweepRateLimits],
-    ['orphanedMedia', sweepOrphanedMedia]
+    ['orphanedMedia', sweepOrphanedMedia],
+    // Rotation writes a row per refresh — roughly 96 per active user per day at
+    // a 15-minute access lifetime. Without this the table only grows.
+    ['refreshTokens', require('../utils/tokens').sweepRefreshTokens]
   ]) {
     try {
       result[name] = await job();

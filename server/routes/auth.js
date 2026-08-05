@@ -15,7 +15,33 @@ const {
   isValidEmail, isStrongPassword, sanitizeNamePart, sanitizeText
 } = require('../utils/validate');
 
-const generateToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET || 'dev_insecure_jwt', { expiresIn: '7d' });
+const {
+  RefreshError,
+  REFRESH_COOKIE,
+  issueSession,
+  rotateRefreshToken,
+  revokeRefreshToken,
+  revokeFamily,
+  setRefreshCookie,
+  clearRefreshCookie
+} = require('../utils/tokens');
+
+/**
+ * Start a session: 15-minute access token in the body, 30-day refresh token in
+ * an httpOnly cookie the client's JavaScript can never read.
+ *
+ * The access token used to last seven days and live in localStorage, which made
+ * it worth stealing. Now it expires before most people finish a coffee, and the
+ * thing that does last is unreadable by script.
+ */
+async function startSession(req, res, userId) {
+  const session = await issueSession(userId, {
+    userAgent: req.headers['user-agent'] || '',
+    ip: req.headers['x-forwarded-for'] || req.ip || ''
+  });
+  setRefreshCookie(res, session.refreshToken);
+  return session;
+}
 
 const VALID_GENDERS = ['male', 'female', 'non-binary', 'prefer-not-to-say'];
 
@@ -139,9 +165,9 @@ router.post('/register', authLimiter, async (req, res) => {
       link: '/settings'
     }).catch(() => {});
 
-    const token = generateToken(user.id);
+    const { accessToken } = await startSession(req, res, user.id);
     res.status(201).json({
-      token,
+      token: accessToken,
       user: publicUser(user),
       message: 'Account created. Check your email for a verification code.',
       ...(process.env.NODE_ENV !== 'production' && { devEmailOtp: emailOtp })
@@ -192,9 +218,75 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(403).json({ message: 'This account has been deactivated. Contact support.' });
     }
 
-    const token = generateToken(user.id);
-    res.json({ token, user: publicUser(user) });
+    const { accessToken } = await startSession(req, res, user.id);
+    res.json({ token: accessToken, user: publicUser(user) });
   } catch (err) { sendError(res, err, req, "Authentication failed"); }
+});
+
+/**
+ * POST /api/auth/refresh
+ *
+ * Takes nothing from the body — the token comes from the httpOnly cookie, which
+ * is why it cannot be read or forged by page script.
+ *
+ * Deliberately not behind `protect`: the whole point is to be callable once the
+ * access token has expired. It is also not behind authLimiter, because a client
+ * refreshing every fifteen minutes is normal traffic, not a login attempt.
+ */
+router.post('/refresh', async (req, res) => {
+  const presented = req.cookies?.[REFRESH_COOKIE];
+  if (!presented) {
+    return res.status(401).json({ message: 'No refresh token' });
+  }
+
+  try {
+    const { accessToken, refreshToken } = await rotateRefreshToken(presented, {
+      userAgent: req.headers['user-agent'] || '',
+      ip: req.headers['x-forwarded-for'] || req.ip || ''
+    });
+    setRefreshCookie(res, refreshToken);
+    res.json({ token: accessToken });
+  } catch (err) {
+    if (err instanceof RefreshError) {
+      // Includes the reuse case, where rotateRefreshToken has already revoked
+      // the family. Clear the cookie so the client stops retrying a token that
+      // will never work again.
+      clearRefreshCookie(res);
+      return res.status(401).json({
+        message: err.reuse ? 'Session ended for security reasons. Please log in again.' : 'Session expired'
+      });
+    }
+    sendError(res, err, req, 'Could not refresh your session');
+  }
+});
+
+/**
+ * POST /api/auth/logout
+ *
+ * Revokes the presented token only. `all: true` revokes every session for the
+ * user — the "log out everywhere" case, which needs a valid access token
+ * because it affects sessions beyond this one.
+ */
+router.post('/logout', async (req, res) => {
+  try {
+    const presented = req.cookies?.[REFRESH_COOKIE];
+
+    if (req.body?.all) {
+      const header = req.headers.authorization || '';
+      const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev_insecure_jwt');
+        if (decoded?.id) await revokeFamily(decoded.id);
+      } catch {
+        return res.status(401).json({ message: 'Not authorized' });
+      }
+    } else {
+      await revokeRefreshToken(presented);
+    }
+
+    clearRefreshCookie(res);
+    res.json({ message: 'Logged out' });
+  } catch (err) { sendError(res, err, req, 'Could not log out'); }
 });
 
 // GET /api/auth/me
@@ -361,6 +453,12 @@ router.post('/forgot-password', authLimiter, sensitiveLimiter, async (req, res) 
 
     if (upErr) throw upErr;
 
+    // Recovery implies the account may already be in someone else's hands, so
+    // every existing session goes with the old password. Unlike change-password
+    // no replacement session is issued: the caller here is unauthenticated and
+    // has to log in with the emailed password.
+    await revokeFamily(user.id);
+
     await sendEmail(
       user.email,
       'Nexora - Your New Password',
@@ -401,7 +499,22 @@ router.post('/change-password', protect, sensitiveLimiter, async (req, res) => {
     const { error } = await getSupabase().from('users').update({ password: hashed }).eq('id', row.id);
     if (error) throw error;
 
-    res.json({ message: 'Password changed successfully' });
+    /*
+     * Changing a password ends every other session.
+     *
+     * People change passwords because they think someone else has one. Leaving
+     * a stolen 30-day refresh token valid would make the change theatre — the
+     * attacker keeps refreshing indefinitely and never needs the password
+     * again. This was moot when tokens were unrevocable; now that they are not,
+     * failing to revoke would be a choice.
+     *
+     * The caller is then re-issued a session so they are not logged out of the
+     * device they just used.
+     */
+    await revokeFamily(row.id);
+    const { accessToken } = await startSession(req, res, row.id);
+
+    res.json({ message: 'Password changed successfully', token: accessToken });
   } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
