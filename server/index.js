@@ -72,6 +72,7 @@ app.use(require('cookie-parser')());
 // One structured JSON line per request, carrying a request id that sendError
 // reuses — so a user quoting an id can be traced to the exact failure.
 const { requestLogger } = require('./utils/observability');
+const { isDev } = require('./utils/respond');
 app.use(requestLogger);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
@@ -319,7 +320,7 @@ async function startServer(opts = {}) {
     else console.warn('API client error:', err.message);
     res.status(status).json({
       message: err.message || 'Server error',
-      ...(process.env.NODE_ENV !== 'production' && err.stack ? { stack: err.stack } : {})
+      ...(isDev() && err.stack ? { stack: err.stack } : {})
     });
   });
 

@@ -8,7 +8,7 @@ const { INTERESTS, GENDERS, normalizeInterests } = require('../db/interests');
 const { ensureInterestContent } = require('../db/seedInterests');
 const { pushNotification, touchUserActivity } = require('../db/features');
 const { sanitizeText, sanitizeNamePart, escapePostgrestValue } = require('../utils/validate');
-const { sendError } = require('../utils/respond');
+const { sendError, isDev } = require('../utils/respond');
 const { MediaError, verifyUpload, buildDerivatives, cleanupPrevious } = require('../utils/profileMedia');
 
 async function getFriendIds(db, userId) {
@@ -524,14 +524,14 @@ router.post('/language', protect, async (req, res) => {
       // There is no real SMS provider wired up, so in dev we surface the code.
       // In production this must never leave the server — it previously did,
       // unconditionally, which made the OTP gate decorative.
-      const isDev = process.env.NODE_ENV !== 'production';
-      if (isDev) {
+      const isDevEnv = isDev();
+      if (isDevEnv) {
         console.log(`[mock sms] to ${user.phone || 'no-phone'} | otp ${otp}`);
       }
       res.json({
         message: 'OTP sent to your mobile number to verify language switch',
         method: 'sms',
-        ...(isDev ? { devOTP: otp } : {})
+        ...(isDevEnv ? { devOTP: otp } : {})
       });
     }
   } catch (err) { sendError(res, err, req, "Could not complete that request"); }

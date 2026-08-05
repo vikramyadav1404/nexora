@@ -32,7 +32,10 @@ export default function ForgotPassword() {
       const res = await axios.post('/api/auth/forgot-password', payload);
       setSuccess(res.data.message);
       if (res.data.devPassword) setNewPwResult(res.data.devPassword);
-      toast.success('Password reset successful!');
+      // Not "reset successful" — the server answers identically whether or not
+      // an account exists, so claiming success would be asserting something we
+      // were deliberately not told.
+      toast.success('Check your inbox');
     } catch (err) {
       setError(err.response?.data?.message || 'Request failed');
     } finally {

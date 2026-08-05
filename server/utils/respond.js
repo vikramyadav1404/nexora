@@ -16,6 +16,21 @@ const crypto = require('crypto');
 
 const isProd = () => process.env.NODE_ENV === 'production';
 
+/**
+ * Whether it is safe to put development aids in a response body.
+ *
+ * Deliberately a positive test for 'development' rather than `!== 'production'`.
+ * The negated form fails open: an unset, empty, or misspelled NODE_ENV — a
+ * missing dashboard variable, a typo, a process started outside the usual
+ * wrapper — silently satisfies it, and the endpoint starts handing plaintext
+ * passwords, OTPs and stack traces to unauthenticated callers.
+ *
+ * With this form, anything other than an explicit 'development' reveals
+ * nothing. The worst case is a developer losing a convenience, rather than a
+ * production deployment leaking credentials.
+ */
+const isDev = () => process.env.NODE_ENV === 'development';
+
 /** Errors we deliberately surface verbatim — they tell the operator how to fix setup. */
 function isSafeSetupError(err) {
   const msg = String(err?.message || '');
@@ -85,9 +100,11 @@ function sendError(res, err, req, message = 'Something went wrong on our end', s
   res.status(status).json({
     message,
     requestId: id,
-    // In dev the real error is far more useful than a generic string
-    ...(isProd() ? {} : { detail: err?.message })
+    // In dev the real error is far more useful than a generic string.
+    // isDev(), not !isProd(): an unset NODE_ENV must not start echoing raw
+    // Postgres errors — table and column names included — back to callers.
+    ...(isDev() ? { detail: err?.message } : {})
   });
 }
 
-module.exports = { sendError, requestId };
+module.exports = { isDev, sendError, requestId };

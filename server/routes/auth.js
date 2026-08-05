@@ -10,7 +10,7 @@ const { protect } = require('../middleware/auth');
 const { sendEmail, generatePassword, generateOTP } = require('../utils/email');
 const { pushNotification } = require('../db/features');
 const { authLimiter, sensitiveLimiter } = require('../middleware/rateLimit');
-const { sendError } = require('../utils/respond');
+const { sendError, isDev } = require('../utils/respond');
 const {
   isValidEmail, isStrongPassword, sanitizeNamePart, sanitizeText
 } = require('../utils/validate');
@@ -170,7 +170,7 @@ router.post('/register', authLimiter, async (req, res) => {
       token: accessToken,
       user: publicUser(user),
       message: 'Account created. Check your email for a verification code.',
-      ...(process.env.NODE_ENV !== 'production' && { devEmailOtp: emailOtp })
+      ...(isDev() && { devEmailOtp: emailOtp })
     });
   } catch (err) {
     sendError(res, err, req, 'Could not create your account');
@@ -342,7 +342,7 @@ router.post('/send-email-otp', protect, sensitiveLimiter, async (req, res) => {
 
     res.json({
       message: 'Verification code sent to your email',
-      ...(process.env.NODE_ENV !== 'production' && { devEmailOtp: otp })
+      ...(isDev() && { devEmailOtp: otp })
     });
   } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
@@ -428,15 +428,33 @@ router.post('/forgot-password', authLimiter, sensitiveLimiter, async (req, res) 
 
     const { data: user, error } = await query.maybeSingle();
     if (error) throw error;
-    if (!user) return res.status(404).json({ message: 'User not found with that email/phone' });
 
-    if (isToday(user.last_forgot_password_date)) {
-      if ((user.forgot_password_count_today || 0) >= 1) {
-        return res.status(429).json({
-          message: '⚠️ You have already requested a password reset today. Please try again tomorrow.',
-          warning: true
-        });
-      }
+    /*
+     * One response for every input.
+     *
+     * This used to answer 404 "User not found" for an unknown address, 200 for
+     * a known one, and 429 for a known one that had already reset today. Three
+     * distinguishable answers make the endpoint an oracle: anyone can test an
+     * email against it and learn whether that person has an account here, which
+     * for a social platform is a membership disclosure, and everywhere else is
+     * the first half of a credential-stuffing run.
+     *
+     * The work below is now conditional but the reply is not.
+     *
+     * Residual: a real address does bcrypt and an SMTP round-trip, so it takes
+     * measurably longer than an unknown one. Closing that needs the send moved
+     * off the request path; the obvious oracle is what is being removed here.
+     */
+    const genericReply = () => res.json({
+      message: `If an account exists for that ${email ? 'email' : 'phone'}, a new password has been sent.`
+    });
+
+    if (!user) return genericReply();
+
+    // Silently cap at one reset per day. The caller cannot tell this apart from
+    // a successful send, which is the point.
+    if (isToday(user.last_forgot_password_date) && (user.forgot_password_count_today || 0) >= 1) {
+      return genericReply();
     }
 
     const newPassword = generatePassword(10);
@@ -475,10 +493,13 @@ router.post('/forgot-password', authLimiter, sensitiveLimiter, async (req, res) 
       `
     );
 
-    res.json({
-      message: `New password sent to your ${email ? 'email' : 'phone'}. Check your inbox!`,
-      ...(process.env.NODE_ENV !== 'production' && { devPassword: newPassword })
-    });
+    if (isDev()) {
+      return res.json({
+        message: `If an account exists for that ${email ? 'email' : 'phone'}, a new password has been sent.`,
+        devPassword: newPassword
+      });
+    }
+    return genericReply();
   } catch (err) { sendError(res, err, req, "Authentication failed"); }
 });
 
