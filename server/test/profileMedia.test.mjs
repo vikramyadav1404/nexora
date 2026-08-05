@@ -44,6 +44,21 @@ const PNG = Buffer.concat([
 ]);
 const NOT_AN_IMAGE = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>');
 
+/**
+ * A genuinely decodable WebP, not just a valid header.
+ *
+ * The header-only version passes sniffImageType but makes sharp throw, which
+ * exercises the degrade path instead of the success path — the sniffer checks
+ * the first bytes, sharp is the actual decoder.
+ */
+const sharp = require('sharp');
+const REAL_WEBP = await sharp({
+  create: { width: 256, height: 256, channels: 3, background: { r: 110, g: 86, b: 248 } }
+}).webp().toBuffer();
+
+/** Every fetch the code makes, so tests can assert on round-trips. */
+const fetchCalls = [];
+
 let db;
 const token = (id = USER.id) => jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
@@ -66,7 +81,9 @@ beforeEach(() => {
 
   // readRange() signs a URL then fetches it with a Range header. Serve those
   // reads out of the fake bucket instead of the network.
+  fetchCalls.length = 0;
   vi.stubGlobal('fetch', async (url, opts = {}) => {
+    fetchCalls.push(String(url));
     const match = String(url).match(/\/read\/([^/]+)\/(.+)$/);
     if (!match) return { ok: false, status: 404 };
     const obj = db._objects.get(`${match[1]}/${decodeURIComponent(match[2])}`);
@@ -218,6 +235,78 @@ describe('PATCH /api/users/me/avatar', () => {
     expect(removed).toContain(oldKey);
     // And the replacement survived the cleanup.
     expect(db._objects.has(`avatars/${newKey}`)).toBe(true);
+  });
+});
+
+describe('magic-byte check on the avatar download path', () => {
+  // The avatar path no longer does a ranged read: verifyUpload returns without
+  // inspecting bytes, and buildDerivatives sniffs the downloaded buffer before
+  // sharp. These tests pin that so the check cannot be refactored away.
+  const { buildDerivatives, verifyUpload: verify } = require('../utils/profileMedia.js');
+
+  it('buildDerivatives throws 400 for a non-image, before sharp runs', async () => {
+    const key = `users/${USER.id}/avatar/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.png`;
+    db._seedObject('avatars', key, NOT_AN_IMAGE, 'image/png');
+
+    await expect(buildDerivatives({ bucket: 'avatars', key, kind: 'avatar' }))
+      .rejects.toMatchObject({ status: 400, message: /not a JPEG, PNG or WebP/i });
+
+    // Nothing was written: no thumbnail object was uploaded.
+    const uploads = db._storageCalls.filter(c => c.op === 'upload');
+    expect(uploads).toHaveLength(0);
+  });
+
+  it('the rejection is not swallowed by the thumbnail-failure handler', async () => {
+    // renderDerivative failing degrades to "no thumbnail". A non-image must not
+    // take that path — if the sniff moved inside that try/catch, this passes a
+    // bad file through with avatar_thumb_url: ''.
+    const key = `users/${USER.id}/avatar/bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee.png`;
+    db._seedObject('avatars', key, NOT_AN_IMAGE, 'image/png');
+
+    const result = await buildDerivatives({ bucket: 'avatars', key, kind: 'avatar' })
+      .then(r => r, () => 'threw');
+    expect(result).toBe('threw');
+  });
+
+  it('verifyUpload alone no longer inspects avatar bytes', async () => {
+    // Documents the split: the size/ownership gate still runs here, but the
+    // format gate has moved. If someone calls verifyUpload without then calling
+    // buildDerivatives, they have NOT verified the file is an image.
+    const key = `users/${USER.id}/avatar/cccccccc-bbbb-4ccc-8ddd-eeeeeeeeeeee.png`;
+    db._seedObject('avatars', key, NOT_AN_IMAGE, 'image/png');
+
+    const res = await verify({ key, kind: 'avatar', userId: USER.id });
+    expect(res.bucket).toBe('avatars');
+    expect(res.contentType).toBeNull();
+  });
+
+  it('a genuine image still passes both halves and produces a thumbnail', async () => {
+    const key = `users/${USER.id}/avatar/dddddddd-bbbb-4ccc-8ddd-eeeeeeeeeeee.webp`;
+    db._seedObject('avatars', key, REAL_WEBP, 'image/webp');
+
+    const updates = await buildDerivatives({ bucket: 'avatars', key, kind: 'avatar' });
+    expect(updates.avatar_key).toBe(key);
+    expect(updates.avatar_thumb_url).toBeTruthy();
+  });
+
+  it('the ranged read is gone from the avatar path', async () => {
+    // The whole point of the change. readRange() signs a URL and fetches it;
+    // if either happens for an avatar, the two round-trips are back.
+    const key = `users/${USER.id}/avatar/eeeeeeee-bbbb-4ccc-8ddd-eeeeeeeeeeee.webp`;
+    db._seedObject('avatars', key, REAL_WEBP, 'image/webp');
+    fetchCalls.length = 0;
+
+    await verify({ key, kind: 'avatar', userId: USER.id });
+    expect(fetchCalls).toHaveLength(0);
+  });
+
+  it('the cover path still uses the ranged read', async () => {
+    const key = `users/${USER.id}/cover/ffffffff-bbbb-4ccc-8ddd-eeeeeeeeeeee.png`;
+    db._seedObject('covers', key, PNG, 'image/png');
+    fetchCalls.length = 0;
+
+    await verify({ key, kind: 'cover', userId: USER.id });
+    expect(fetchCalls.length).toBeGreaterThan(0);
   });
 });
 
