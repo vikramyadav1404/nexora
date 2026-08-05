@@ -127,4 +127,21 @@ const aiLimiter = limiter({
   message: 'You have used a lot of AI assists this hour. Try again later.'
 });
 
-module.exports = { apiLimiter, authLimiter, sensitiveLimiter, writeLimiter, aiLimiter, PostgresStore };
+// Signed upload URLs. Ten an hour is far more than a person changing their
+// profile picture needs, and it caps how fast a compromised token could mint
+// write access to the bucket.
+const uploadLimiter = limiter({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.RATE_LIMIT_UPLOAD || 10),
+  message: 'Too many upload requests this hour. Try again later.'
+});
+
+module.exports = {
+  apiLimiter,
+  authLimiter,
+  sensitiveLimiter,
+  writeLimiter,
+  aiLimiter,
+  uploadLimiter,
+  PostgresStore
+};

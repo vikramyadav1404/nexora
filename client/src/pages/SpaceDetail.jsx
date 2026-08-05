@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from '../services/api';
 import { ArrowLeft } from 'lucide-react';
-import { SkeletonList, SkeletonPostCard } from '../components/ui';
+import { Avatar, SkeletonList, SkeletonPostCard } from '../components/ui';
 
 export default function SpaceDetail() {
   const { id } = useParams();
@@ -101,7 +101,12 @@ export default function SpaceDetail() {
           <div className="glass-card" style={{ padding: 12 }}>
             {members.map(m => (
               <Link key={m.id} to={`/profile/${m.id}`} className="side-link">
-                <div className="avatar-placeholder" style={{ width: 36, height: 36 }}>{m.name?.[0]}</div>
+                <Avatar
+                  src={m.avatarThumbUrl || m.avatar}
+                  name={m.name}
+                  userId={m.id}
+                  size={36}
+                />
                 <div>
                   <div style={{ fontWeight: 600 }}>{m.name}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>{m.points || 0} pts</div>

@@ -145,6 +145,60 @@ async function weeklyDigest() {
   return { sent, candidates: users.length };
 }
 
+/**
+ * Delete profile-media objects no user row points at.
+ *
+ * Two ways these appear: a browser that got a signed upload URL, PUT the file,
+ * then closed the tab before calling PATCH, and a `cleanupPrevious` delete that
+ * failed after a successful replace. Neither is worth failing a user request
+ * over, so they accumulate here instead and get collected once a day.
+ *
+ * This is the one place a bucket listing is acceptable — it runs on a schedule,
+ * never on a request path.
+ */
+async function sweepOrphanedMedia() {
+  const { KIND_CONFIG, deleteObject } = require('../utils/mediaStorage');
+  const db = getSupabase();
+  let removed = 0;
+  let scanned = 0;
+
+  for (const [kind, { bucket }] of Object.entries(KIND_CONFIG)) {
+    const keyColumn = kind === 'avatar' ? 'avatar_key' : 'cover_key';
+
+    const { data: rows } = await db
+      .from('users')
+      .select(keyColumn)
+      .neq(keyColumn, '');
+    const live = new Set((rows || []).map(r => r[keyColumn]).filter(Boolean));
+
+    // Avatar thumbnails are derived from the parent key, so they are live too.
+    if (kind === 'avatar') {
+      for (const key of [...live]) {
+        live.add(key.replace(/\.([a-z0-9]+)$/i, '') + '-128.webp');
+      }
+    }
+
+    const { data: users } = await db.from('users').select('id').limit(1000);
+    for (const user of users || []) {
+      const prefix = `users/${user.id}/${kind}`;
+      const { data: objects } = await db.storage.from(bucket).list(prefix, { limit: 100 });
+      for (const obj of objects || []) {
+        scanned += 1;
+        const key = `${prefix}/${obj.name}`;
+        if (live.has(key)) continue;
+
+        // Grace period: an upload in flight has no row pointing at it yet.
+        const age = Date.now() - new Date(obj.created_at || obj.updated_at || 0).getTime();
+        if (age < 60 * 60 * 1000) continue;
+
+        if (await deleteObject(bucket, key)) removed += 1;
+      }
+    }
+  }
+
+  return { scanned, removed };
+}
+
 /* ── routes ──────────────────────────────────────────────── */
 
 /**
@@ -157,9 +211,13 @@ async function weeklyDigest() {
 router.post('/daily', async (req, res) => {
   if (!authorize(req, res)) return;
 
-  const result = { ok: true, transactions: null, rateLimits: null, errors: [] };
+  const result = { ok: true, transactions: null, rateLimits: null, orphanedMedia: null, errors: [] };
 
-  for (const [name, job] of [['transactions', sweepTransactions], ['rateLimits', sweepRateLimits]]) {
+  for (const [name, job] of [
+    ['transactions', sweepTransactions],
+    ['rateLimits', sweepRateLimits],
+    ['orphanedMedia', sweepOrphanedMedia]
+  ]) {
     try {
       result[name] = await job();
     } catch (err) {

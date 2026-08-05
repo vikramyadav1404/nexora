@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const {
-  computeBadges, shapeAnswer, shapeAuthor, AUTHOR_FIELDS
+  computeBadges, shapeAnswer, shapeAuthor, authorFields
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { pushNotification, touchUserActivity } = require('../db/features');
@@ -66,7 +66,7 @@ router.post('/:questionId', protect, async (req, res) => {
       }).catch(() => {});
     }
 
-    const { data: author } = await db.from('users').select(AUTHOR_FIELDS).eq('id', user.id).single();
+    const { data: author } = await db.from('users').select(authorFields()).eq('id', user.id).single();
     res.status(201).json({
       answer: shapeAnswer(answer, { author: shapeAuthor(author), upvotes: [], downvotes: [] }),
       pointsEarned: 5

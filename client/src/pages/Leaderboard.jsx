@@ -4,6 +4,7 @@ import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { Trophy, Star, ArrowRight, Gift } from 'lucide-react';
+import { Avatar } from '../components/ui';
 
 export default function Leaderboard() {
   const { user } = useAuth();
@@ -98,9 +99,13 @@ export default function Leaderboard() {
                     <div key={index} style={{ flex: 1, textAlign: 'center', order, cursor: 'pointer' }}
                       onClick={() => navigate(`/profile/${person._id}`)}>
                       <div style={{ fontSize: 28, marginBottom: 6 }}>{medals[index]}</div>
-                      <div className="avatar-placeholder" style={{ width: 52, height: 52, fontSize: 20, margin: '0 auto 8px', border: `2px solid ${colors[index]}` }}>
-                        {person.name?.[0]?.toUpperCase()}
-                      </div>
+                      <Avatar
+                        src={person.avatarThumbUrl || person.avatar}
+                        name={person.name}
+                        userId={person._id || person.id}
+                        size={52}
+                        style={{ margin: '0 auto 8px', border: `2px solid ${colors[index]}` }}
+                      />
                       <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>{person.name?.split(' ')[0]}</div>
                       <div style={{ color: colors[index], fontWeight: 800, fontSize: 16 }}>{person.points}</div>
                       <div style={{ height, background: `linear-gradient(to top, ${colors[index]}33, transparent)`, borderRadius: '8px 8px 0 0', marginTop: 8, border: `1px solid ${colors[index]}44` }} />
@@ -143,13 +148,13 @@ export default function Leaderboard() {
                         {i + 1}
                       </div>
 
-                      {/* Avatar */}
-                      {person.avatar
-                        ? <img src={person.avatar} style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} alt="" />
-                        : <div className="avatar-placeholder" style={{ width: 40, height: 40, fontSize: 16, flexShrink: 0 }}>
-                            {person.name?.[0]?.toUpperCase()}
-                          </div>
-                      }
+                      <Avatar
+                        src={person.avatarThumbUrl || person.avatar}
+                        name={person.name}
+                        userId={person._id || person.id}
+                        size={40}
+                        style={{ flexShrink: 0 }}
+                      />
 
                       {/* Info */}
                       <div style={{ flex: 1 }}>

@@ -1742,6 +1742,235 @@ a, button, [role="button"], input, select, textarea, .action-btn, .tab-item,
   box-shadow: 0 0 0 3px var(--nx-violet-soft);
 }
 
+/* ─── Profile header: cover + overlapping avatar ─────────── */
+.profile-header {
+  background: var(--bg-surface);
+  border-radius: 0 0 var(--r-xl) var(--r-xl);
+  box-shadow: var(--shadow-card);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.profile-cover {
+  position: relative;
+  height: 220px;
+  background-size: cover;
+  background-position: center;
+  /* No cover set: the brand gradient stands in, so the header still reads as
+     designed rather than as a missing image. */
+  background-image: var(--nx-gradient);
+}
+
+@media (max-width: 640px) {
+  .profile-cover { height: 150px; }
+}
+
+/* Covers are user-supplied, so the name and bio below sit against something
+   completely unpredictable. This scrim is what keeps them legible over a white
+   sky or a blown-out photo. */
+.profile-cover-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.18) 0%,
+    rgba(0, 0, 0, 0) 45%,
+    rgba(0, 0, 0, 0.42) 100%
+  );
+  pointer-events: none;
+}
+
+.profile-cover-actions {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 2;
+}
+
+.profile-media-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.46);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.profile-media-btn:hover:not(:disabled) { background: rgba(0, 0, 0, 0.66); }
+.profile-media-btn:disabled { opacity: 0.6; cursor: default; }
+
+.profile-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 0 24px 24px;
+  flex-wrap: wrap;
+}
+
+.profile-avatar-slot {
+  position: relative;
+  /* Pull the avatar up so it straddles the cover's bottom edge. */
+  margin-top: -66px;
+  flex-shrink: 0;
+}
+
+.profile-identity-body {
+  flex: 1;
+  min-width: 260px;
+  padding-top: 12px;
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.profile-avatar-edit {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-surface);
+  background: var(--nx-violet);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform var(--t-fast);
+}
+.profile-avatar-edit:hover:not(:disabled) { transform: scale(1.08); }
+.profile-avatar-edit:disabled { opacity: 0.6; cursor: default; }
+
+@media (max-width: 640px) {
+  .profile-identity { justify-content: center; text-align: center; }
+  .profile-avatar-slot { margin-top: -54px; }
+  .profile-identity-body { justify-content: center; }
+}
+
+/* ─── Upload status ──────────────────────────────────────── */
+.upload-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.upload-status.is-failed {
+  background: var(--red-muted);
+  color: var(--red);
+  flex-wrap: wrap;
+}
+.upload-status-bar {
+  flex: 1;
+  min-width: 120px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+.upload-status-fill {
+  height: 100%;
+  background: var(--nx-violet);
+  border-radius: inherit;
+  transition: width 120ms linear;
+}
+
+/* ─── Cropper ────────────────────────────────────────────── */
+.cropper-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: var(--bg-scrim);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.cropper-panel {
+  background: var(--bg-surface);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-modal, 0 24px 60px rgba(0, 0, 0, 0.35));
+  width: min(560px, 100%);
+  padding: 20px;
+}
+.cropper-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  font-size: 16px;
+}
+.cropper-close {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  display: flex;
+  padding: 4px;
+}
+.cropper-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  touch-action: none;
+  user-select: none;
+}
+.cropper-frame.is-square { aspect-ratio: 1 / 1; max-height: 340px; margin: 0 auto; width: 340px; max-width: 100%; }
+.cropper-frame.is-wide { aspect-ratio: 3 / 1; width: 100%; }
+
+.cropper-image {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: none;
+  transform-origin: center;
+  pointer-events: none;
+}
+/* The mask shows the crop boundary without clipping the draggable image. */
+.cropper-mask {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.42);
+}
+.cropper-mask.is-square { border-radius: 50%; }
+
+.cropper-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  color: var(--text-muted);
+}
+.cropper-controls input[type='range'] { flex: 1; accent-color: var(--nx-violet); }
+
+.cropper-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+.cropper-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 /* ─── Profile ────────────────────────────── */
 .profile-hero {
   background: var(--bg-surface);

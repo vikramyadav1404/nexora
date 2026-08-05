@@ -3,7 +3,8 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const { getSupabase } = require('../db/supabase');
 const {
-  hashPassword, comparePassword, shapeUser, isToday, computeBadges
+  hashPassword, comparePassword, shapeUser, isToday, computeBadges,
+  withMediaColumns
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendEmail, generatePassword, generateOTP } = require('../utils/email');
@@ -206,7 +207,7 @@ router.get('/me', protect, async (req, res) => {
     const { data: links } = await db.from('friendships').select('friend_id').eq('user_id', userId);
     const ids = (links || []).map(l => l.friend_id);
     if (ids.length) {
-      const { data: users } = await db.from('users').select('id, name, avatar, points, badges').in('id', ids);
+      const { data: users } = await db.from('users').select(withMediaColumns('id, name, avatar, points, badges')).in('id', ids);
       friends = (users || []).map(f => ({
         _id: f.id, id: f.id, name: f.name, avatar: f.avatar, points: f.points, badges: f.badges || []
       }));

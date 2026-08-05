@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Globe, Shield, Key, Smartphone, Mail, Check, AlertTriangle, RefreshCw, Eye, EyeOff, UserCheck, Users, Sparkles } from 'lucide-react';
 import { LANGUAGE_META } from '../i18n/translations';
+import { Avatar } from '../components/ui';
 
 export default function Settings() {
   const { user, refreshUser, updateUser, logout } = useAuth();
@@ -344,9 +345,13 @@ export default function Settings() {
                   const rname = req.name || 'User';
                   return (
                     <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 0', borderBottom: '1px solid var(--border-soft)' }}>
-                      <div className="avatar-placeholder" style={{ width: 44, height: 44, fontSize: 18, flexShrink: 0 }}>
-                        {rname[0]?.toUpperCase()}
-                      </div>
+                      <Avatar
+                        src={req.avatarThumbUrl || req.avatar}
+                        name={rname}
+                        userId={rid}
+                        size={44}
+                        style={{ flexShrink: 0 }}
+                      />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 15 }}>{rname}</div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{req.email}</div>
@@ -393,9 +398,13 @@ export default function Settings() {
                   const isAlreadyFriend = user?.friends?.includes(uid);
                   return (
                     <div key={uid} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border-soft)' }}>
-                      <div className="avatar-placeholder" style={{ width: 40, height: 40, fontSize: 16, flexShrink: 0 }}>
-                        {u.name?.[0]?.toUpperCase()}
-                      </div>
+                      <Avatar
+                        src={u.avatarThumbUrl || u.avatar}
+                        name={u.name}
+                        userId={uid}
+                        size={40}
+                        style={{ flexShrink: 0 }}
+                      />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600 }}>{u.name}</div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{u.email}</div>

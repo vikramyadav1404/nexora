@@ -124,8 +124,86 @@ function createFakeSupabase(seed = {}) {
     rate_limit_reset() { return { data: null, error: null }; }
   };
 
+  /**
+   * In-memory object storage.
+   *
+   * Keyed `bucket/key` → { buffer, contentType }. Enough to exercise the
+   * signed-URL mint, the stat, the ranged magic-byte read and the delete
+   * without ever reaching Supabase — CI must never touch a real bucket.
+   */
+  const objects = new Map(seed.storage instanceof Map ? seed.storage : []);
+  const objectId = (bucket, key) => `${bucket}/${key}`;
+  const storageCalls = [];
+
+  function storageFrom(bucket) {
+    return {
+      createSignedUploadUrl(key) {
+        storageCalls.push({ op: 'createSignedUploadUrl', bucket, key });
+        return Promise.resolve({
+          data: { signedUrl: `https://fake.storage/${bucket}/${key}?token=t`, token: 't', path: key },
+          error: null
+        });
+      },
+      info(key) {
+        storageCalls.push({ op: 'info', bucket, key });
+        const obj = objects.get(objectId(bucket, key));
+        if (!obj) return Promise.resolve({ data: null, error: { message: 'Object not found' } });
+        return Promise.resolve({
+          data: { size: obj.buffer.length, contentType: obj.contentType },
+          error: null
+        });
+      },
+      createSignedUrl(key) {
+        const obj = objects.get(objectId(bucket, key));
+        if (!obj) return Promise.resolve({ data: null, error: { message: 'Object not found' } });
+        return Promise.resolve({
+          data: { signedUrl: `https://fake.storage/read/${bucket}/${key}` },
+          error: null
+        });
+      },
+      download(key) {
+        const obj = objects.get(objectId(bucket, key));
+        if (!obj) return Promise.resolve({ data: null, error: { message: 'Object not found' } });
+        return Promise.resolve({
+          data: { arrayBuffer: async () => obj.buffer },
+          error: null
+        });
+      },
+      upload(key, buffer, opts = {}) {
+        storageCalls.push({ op: 'upload', bucket, key });
+        objects.set(objectId(bucket, key), {
+          buffer: Buffer.from(buffer),
+          contentType: opts.contentType || 'application/octet-stream'
+        });
+        return Promise.resolve({ data: { path: key }, error: null });
+      },
+      remove(keys) {
+        for (const key of keys) {
+          storageCalls.push({ op: 'remove', bucket, key });
+          objects.delete(objectId(bucket, key));
+        }
+        return Promise.resolve({ data: keys.map(k => ({ name: k })), error: null });
+      },
+      list(prefix) {
+        storageCalls.push({ op: 'list', bucket, prefix });
+        const out = [];
+        for (const id of objects.keys()) {
+          if (!id.startsWith(`${bucket}/${prefix}/`)) continue;
+          out.push({ name: id.slice(`${bucket}/${prefix}/`.length), created_at: new Date(0).toISOString() });
+        }
+        return Promise.resolve({ data: out, error: null });
+      }
+    };
+  }
+
   return {
     _tables: tables,
+    _objects: objects,
+    _storageCalls: storageCalls,
+    /** Put an object in the fake bucket without going through the upload path. */
+    _seedObject(bucket, key, buffer, contentType) {
+      objects.set(objectId(bucket, key), { buffer: Buffer.from(buffer), contentType });
+    },
     from(table) {
       tables[table] ||= [];
       return {
@@ -136,6 +214,7 @@ function createFakeSupabase(seed = {}) {
         upsert: (payload) => new Query(table, tables[table], 'insert', payload)
       };
     },
+    storage: { from: storageFrom },
     rpc(name, args) {
       const handler = rpcHandlers[name];
       if (!handler) return Promise.resolve({ data: null, error: { message: `no rpc ${name}` } });

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const {
-  isToday, getDailyQuestionLimit, shapeQuestion, shapeAnswer, shapeAuthor, AUTHOR_FIELDS
+  isToday, getDailyQuestionLimit, shapeQuestion, shapeAnswer, shapeAuthor, authorFields
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendError } = require('../utils/respond');
@@ -44,7 +44,7 @@ router.get('/', protect, async (req, res) => {
     // Attach authors, vote counts, answer counts
     const shaped = await Promise.all(list.map(async (q) => {
       const [{ data: author }, votes, { count: answerCount }] = await Promise.all([
-        db.from('users').select(AUTHOR_FIELDS).eq('id', q.author_id).single(),
+        db.from('users').select(authorFields()).eq('id', q.author_id).single(),
         getVoteLists(db, 'question_votes', 'question_id', q.id),
         db.from('answers').select('*', { count: 'exact', head: true }).eq('question_id', q.id)
       ]);
@@ -92,14 +92,14 @@ router.get('/:id', protect, async (req, res) => {
     q.views = (q.views || 0) + 1;
 
     const [{ data: author }, votes, { data: answerRows }] = await Promise.all([
-      db.from('users').select(AUTHOR_FIELDS).eq('id', q.author_id).single(),
+      db.from('users').select(authorFields()).eq('id', q.author_id).single(),
       getVoteLists(db, 'question_votes', 'question_id', q.id),
       db.from('answers').select('*').eq('question_id', q.id).order('created_at', { ascending: true })
     ]);
 
     const answers = await Promise.all((answerRows || []).map(async (a) => {
       const [{ data: aAuthor }, aVotes] = await Promise.all([
-        db.from('users').select(AUTHOR_FIELDS).eq('id', a.author_id).single(),
+        db.from('users').select(authorFields()).eq('id', a.author_id).single(),
         getVoteLists(db, 'answer_votes', 'answer_id', a.id)
       ]);
       return shapeAnswer(a, {
@@ -166,7 +166,7 @@ router.post('/', protect, async (req, res) => {
       last_question_date: new Date().toISOString()
     }).eq('id', user.id);
 
-    const { data: author } = await db.from('users').select(AUTHOR_FIELDS).eq('id', user.id).single();
+    const { data: author } = await db.from('users').select(authorFields()).eq('id', user.id).single();
     res.status(201).json({
       question: shapeQuestion(question, {
         author: shapeAuthor(author),

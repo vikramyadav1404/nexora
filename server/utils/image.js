@@ -102,4 +102,46 @@ async function optimizeImage(file, { kind = 'post' } = {}) {
   }
 }
 
-module.exports = { optimizeImage, POST_MAX_DIMENSION, AVATAR_MAX_DIMENSION };
+/** Small avatar, used in comment threads and post cards. */
+const AVATAR_THUMB_DIMENSION = 128;
+const COVER_WIDTH = 1500;
+const COVER_HEIGHT = 500;
+
+/**
+ * Re-encode a buffer to WebP at exact dimensions.
+ *
+ * Unlike optimizeImage() this **throws** when sharp cannot read the input.
+ * That difference is the point. A feed post that fails to optimise should still
+ * publish, but profile media that sharp cannot decode is not an image we should
+ * be storing at all — silently keeping the original is how a text/html payload
+ * ends up served from our bucket origin.
+ *
+ * `cover: true` crops to fill the frame instead of fitting inside it; a banner
+ * with letterboxing looks broken.
+ */
+async function renderDerivative(buffer, { width, height, cover = true } = {}) {
+  if (!sharp) throw new Error('sharp is unavailable on this platform');
+  if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('Empty image buffer');
+
+  return sharp(buffer, { failOn: 'error' })
+    .rotate()
+    .resize({
+      width,
+      height,
+      fit: cover ? 'cover' : 'inside',
+      position: 'attention', // crop toward the busiest region, usually the face
+      withoutEnlargement: false
+    })
+    .webp({ quality: WEBP_QUALITY })
+    .toBuffer();
+}
+
+module.exports = {
+  optimizeImage,
+  renderDerivative,
+  POST_MAX_DIMENSION,
+  AVATAR_MAX_DIMENSION,
+  AVATAR_THUMB_DIMENSION,
+  COVER_WIDTH,
+  COVER_HEIGHT
+};

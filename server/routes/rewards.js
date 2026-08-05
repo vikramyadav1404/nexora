@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
-const { shapeAuthor, computeBadges } = require('../db/helpers');
+const { shapeAuthor, computeBadges, withMediaColumns } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { pushNotification } = require('../db/features');
 const { isValidUuid, sanitizeText } = require('../utils/validate');
@@ -50,7 +50,7 @@ router.get('/leaderboard', protect, async (req, res) => {
   try {
     const { data, error } = await getSupabase()
       .from('users')
-      .select('id, name, avatar, points, badges, total_answers')
+      .select(withMediaColumns('id, name, avatar, points, badges, total_answers'))
       .eq('is_active', true)
       .order('points', { ascending: false })
       .limit(20);
@@ -200,7 +200,7 @@ router.get('/transfers', protect, async (req, res) => {
 
     const { data: users } = await db
       .from('users')
-      .select('id, name, avatar')
+      .select(withMediaColumns('id, name, avatar'))
       .in('id', [...userIds]);
 
     const map = Object.fromEntries((users || []).map(u => [u.id, u]));

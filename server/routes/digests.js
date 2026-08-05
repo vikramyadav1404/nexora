@@ -4,7 +4,7 @@ const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
 const { sendError } = require('../utils/respond');
 const {
-  shapePost, shapeQuestion, shapeAuthor, AUTHOR_FIELDS
+  shapePost, shapeQuestion, shapeAuthor, authorFields
 } = require('../db/helpers');
 
 // GET /api/digests/weekly
@@ -32,7 +32,7 @@ router.get('/weekly', protect, async (req, res) => {
     filteredPosts = filteredPosts.slice(0, 5);
 
     const topPosts = await Promise.all(filteredPosts.map(async (p) => {
-      const { data: author } = await db.from('users').select(AUTHOR_FIELDS).eq('id', p.author_id).single();
+      const { data: author } = await db.from('users').select(authorFields()).eq('id', p.author_id).single();
       return shapePost(p, { author: shapeAuthor(author), media: [], likes: [], comments: [] });
     }));
 
@@ -52,7 +52,7 @@ router.get('/weekly', protect, async (req, res) => {
     filteredQs = filteredQs.slice(0, 5);
 
     const topQuestions = await Promise.all(filteredQs.map(async (q) => {
-      const { data: author } = await db.from('users').select(AUTHOR_FIELDS).eq('id', q.author_id).single();
+      const { data: author } = await db.from('users').select(authorFields()).eq('id', q.author_id).single();
       return shapeQuestion(q, {
         author: shapeAuthor(author),
         answers: [],

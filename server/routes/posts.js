@@ -3,7 +3,8 @@ const router = express.Router();
 const multer = require('multer');
 const { getSupabase } = require('../db/supabase');
 const {
-  isToday, getDailyPostLimit, shapePost, shapeAuthor, loadAuthorMap, groupBy
+  isToday, getDailyPostLimit, shapePost, shapeAuthor, loadAuthorMap, groupBy,
+  withMediaColumns
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { touchUserActivity, pushNotification } = require('../db/features');
@@ -308,7 +309,7 @@ router.post('/:id/comment', protect, async (req, res) => {
       .order('created_at', { ascending: true });
 
     const authorIds = [...new Set((comments || []).map(c => c.author_id))];
-    const { data: authors } = await db.from('users').select('id, name, avatar').in('id', authorIds);
+    const { data: authors } = await db.from('users').select(withMediaColumns('id, name, avatar')).in('id', authorIds);
     const map = Object.fromEntries((authors || []).map(a => [a.id, a]));
 
     res.json({

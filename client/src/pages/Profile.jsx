@@ -3,9 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
-import { Award, Users, UserPlus, UserMinus, ArrowRight, Gift, Edit2, Save, X, Camera } from 'lucide-react';
+import { Award, Users, UserPlus, UserMinus, ArrowRight, Gift, Edit2, Save, X } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { ErrorState, SkeletonList, SkeletonPostCard } from '../components/ui';
+import { Avatar, ErrorState, SkeletonList, SkeletonPostCard, ImageCropper } from '../components/ui';
+import ProfileHeader from '../components/ProfileHeader';
+import useProfileMedia from '../hooks/useProfileMedia';
 
 export default function Profile() {
   const { id } = useParams();
@@ -38,6 +40,20 @@ export default function Profile() {
 
   const isOwnProfile = id === (currentUser?._id || currentUser?.id);
 
+  // Optimistic: the header repaints from the attach response before the full
+  // profile refetch lands, so the new image appears the moment it is saved.
+  const media = useProfileMedia({
+    onUpdated: (user) => {
+      setProfile(prev => ({ ...prev, ...user }));
+      updateUser({
+        avatar: user.avatar,
+        avatarUrl: user.avatarUrl,
+        avatarThumbUrl: user.avatarThumbUrl,
+        coverUrl: user.coverUrl
+      });
+    }
+  });
+
   useEffect(() => {
     fetchProfile();
   }, [id]);
@@ -69,17 +85,18 @@ export default function Profile() {
     }
     setSaving(true);
     try {
-      const formData = new FormData();
-      formData.append('firstName', editForm.firstName.trim());
-      formData.append('middleName', editForm.middleName.trim());
-      formData.append('lastName', editForm.lastName.trim());
-      formData.append(
-        'name',
-        [editForm.firstName, editForm.middleName, editForm.lastName].map(s => s.trim()).filter(Boolean).join(' ')
-      );
-      formData.append('bio', editForm.bio);
-      formData.append('phone', editForm.phone);
-      const res = await axios.put('/api/users/profile', formData);
+      // Plain JSON, not FormData. This only ever carried text fields, and the
+      // multipart body was never parsed in demo mode — profile edits silently
+      // did nothing there. Images go through /api/uploads/presign now.
+      const res = await axios.put('/api/users/profile', {
+        firstName: editForm.firstName.trim(),
+        middleName: editForm.middleName.trim(),
+        lastName: editForm.lastName.trim(),
+        name: [editForm.firstName, editForm.middleName, editForm.lastName]
+          .map(s => s.trim()).filter(Boolean).join(' '),
+        bio: editForm.bio,
+        phone: editForm.phone
+      });
       setProfile(res.data.user);
       updateUser({ name: res.data.user.name, bio: res.data.user.bio });
       setEditing(false);
@@ -154,34 +171,57 @@ export default function Profile() {
     </div>
   );
 
-  const initials = profile.name?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
   return (
     <div className="page-container">
       <div style={{ maxWidth: 800, margin: '0 auto', padding: '32px 24px' }}>
 
         {/* Profile Hero */}
-        <div className="profile-hero">
-          <div style={{ position: 'relative' }}>
-            {profile.avatar
-              ? <img src={profile.avatar} className="profile-avatar-large" alt={profile.name} />
-              : <div className="profile-avatar-placeholder">{initials}</div>
-            }
-            {isOwnProfile && editing && (
-              <label style={{ position: 'absolute', bottom: 8, right: 8, width: 36, height: 36, borderRadius: '50%', background: 'var(--bg-raised)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '2px solid var(--bg-surface)' }}>
-                <Camera size={16} color="#050505" />
-                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async (e) => {
-                  const fd = new FormData();
-                  fd.append('avatar', e.target.files[0]);
-                  const res = await axios.put('/api/users/profile', fd);
-                  setProfile(res.data.user);
-                  updateUser({ avatar: res.data.user.avatar });
-                  toast.success('Avatar updated!');
-                }} />
-              </label>
-            )}
-          </div>
+        <input {...media.inputProps} />
 
+        {media.stage === 'cropping' && media.file && (
+          <ImageCropper
+            file={media.file}
+            aspect={media.aspect}
+            title={media.kind === 'cover' ? 'Position your cover' : 'Crop your picture'}
+            confirmLabel="Upload"
+            onCancel={media.cancel}
+            onConfirm={media.confirmCrop}
+          />
+        )}
+
+        {(media.stage === 'uploading' || media.stage === 'processing') && (
+          <div className="upload-status" role="status">
+            <div className="upload-status-bar">
+              <div
+                className="upload-status-fill"
+                style={{ width: media.stage === 'processing' ? '100%' : `${media.progress}%` }}
+              />
+            </div>
+            <span>
+              {media.stage === 'processing'
+                ? 'Processing…'
+                : `Uploading ${media.kind}… ${media.progress}%`}
+            </span>
+          </div>
+        )}
+
+        {media.stage === 'failed' && (
+          <div className="upload-status is-failed" role="alert">
+            <span>{media.error}</span>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={media.retry}>Retry</button>
+            <button type="button" className="btn btn-sm btn-secondary" onClick={media.cancel}>Dismiss</button>
+          </div>
+        )}
+
+        <ProfileHeader
+          user={profile}
+          editable={isOwnProfile}
+          busy={media.busy}
+          onPickAvatar={() => media.pick('avatar')}
+          onPickCover={() => media.pick('cover')}
+          onRemoveCover={() => media.remove('cover')}
+        >
           <div style={{ flex: 1 }}>
             {editing ? (
               <div>
@@ -308,7 +348,7 @@ export default function Profile() {
               </>
             )}
           </div>
-        </div>
+        </ProfileHeader>
 
         {/* Stats */}
         <div className="stats-grid" style={{ marginBottom: 24 }}>
@@ -418,9 +458,13 @@ export default function Profile() {
                   return (
                     <div key={fid} className="leaderboard-item" style={{ cursor: 'pointer' }}
                       onClick={() => navigate(`/profile/${fid}`)}>
-                      <div className="avatar-placeholder" style={{ width: 40, height: 40, flexShrink: 0, fontSize: 16 }}>
-                        {fname[0]?.toUpperCase()}
-                      </div>
+                      <Avatar
+                        src={friend.avatarThumbUrl || friend.avatar}
+                        name={fname}
+                        userId={fid}
+                        size={40}
+                        style={{ flexShrink: 0 }}
+                      />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 15 }}>{fname}</div>
                         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>⭐ {friend.points || 0} points</div>

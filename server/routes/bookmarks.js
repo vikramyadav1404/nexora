@@ -4,12 +4,13 @@ const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
 const { sendError } = require('../utils/respond');
 const {
-  shapePost, shapeQuestion, shapeAuthor, AUTHOR_FIELDS
+  shapePost, shapeQuestion, shapeAuthor, authorFields,
+  withMediaColumns
 } = require('../db/helpers');
 
 async function loadPostBundle(db, post) {
   const [{ data: author }, { data: media }, { data: likes }, { data: comments }] = await Promise.all([
-    db.from('users').select(AUTHOR_FIELDS).eq('id', post.author_id).single(),
+    db.from('users').select(authorFields()).eq('id', post.author_id).single(),
     db.from('post_media').select('*').eq('post_id', post.id),
     db.from('post_likes').select('user_id').eq('post_id', post.id),
     db.from('post_comments').select('*').eq('post_id', post.id).order('created_at', { ascending: true })
@@ -18,7 +19,7 @@ async function loadPostBundle(db, post) {
   let shapedComments = [];
   if (comments?.length) {
     const authorIds = [...new Set(comments.map(c => c.author_id))];
-    const { data: authors } = await db.from('users').select('id, name, avatar').in('id', authorIds);
+    const { data: authors } = await db.from('users').select(withMediaColumns('id, name, avatar')).in('id', authorIds);
     const map = Object.fromEntries((authors || []).map(a => [a.id, a]));
     shapedComments = comments.map(c => ({
       ...c,
@@ -35,7 +36,7 @@ async function loadPostBundle(db, post) {
 }
 
 async function loadQuestionLite(db, q) {
-  const { data: author } = await db.from('users').select(AUTHOR_FIELDS).eq('id', q.author_id).single();
+  const { data: author } = await db.from('users').select(authorFields()).eq('id', q.author_id).single();
   const { data: votes } = await db.from('question_votes').select('user_id, vote_type').eq('question_id', q.id);
   const upvotes = [];
   const downvotes = [];

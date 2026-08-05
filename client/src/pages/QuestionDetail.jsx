@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { ArrowLeft, ChevronUp, ChevronDown, CheckCircle, Send, Trash2, Award, Eye } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { ErrorState, SkeletonList, SkeletonQuestionCard } from '../components/ui';
+import { Avatar, ErrorState, SkeletonList, SkeletonQuestionCard } from '../components/ui';
 
 function VoteButtons({ upvotes, downvotes, onUpvote, onDownvote, currentUserId }) {
   const upvoted = upvotes?.includes(currentUserId);
@@ -184,9 +184,12 @@ export default function QuestionDetail() {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-muted)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div className="avatar-placeholder" style={{ width: 26, height: 26, fontSize: 11 }}>
-                    {question.author?.name?.[0]}
-                  </div>
+                  <Avatar
+                    src={question.author?.avatarThumbUrl || question.author?.avatar}
+                    name={question.author?.name}
+                    userId={question.author?._id || question.author?.id}
+                    size={26}
+                  />
                   <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>{question.author?.name}</span>
                 </div>
                 <span>·</span>
@@ -225,9 +228,12 @@ export default function QuestionDetail() {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-muted)' }}>
-                      <div className="avatar-placeholder" style={{ width: 24, height: 24, fontSize: 10 }}>
-                        {answer.author?.name?.[0]}
-                      </div>
+                      <Avatar
+                        src={answer.author?.avatarThumbUrl || answer.author?.avatar}
+                        name={answer.author?.name}
+                        userId={answer.author?._id || answer.author?.id}
+                        size={24}
+                      />
                       {answer.author?.name}
                       <span>·</span>
                       {formatDistanceToNow(new Date(answer.createdAt), { addSuffix: true })}

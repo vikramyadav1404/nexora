@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from '../services/api';
 import { Search as SearchIcon, Users, FileText, HelpCircle, Layers } from 'lucide-react';
+import { Avatar } from '../components/ui';
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams();
@@ -82,9 +83,12 @@ export default function SearchPage() {
                   className="side-link"
                   style={{ padding: '10px 8px' }}
                 >
-                  <div className="avatar-placeholder" style={{ width: 36, height: 36, fontSize: 13 }}>
-                    {p.name?.[0]}
-                  </div>
+                  <Avatar
+                    src={p.avatarThumbUrl || p.avatar}
+                    name={p.name}
+                    userId={p._id || p.id}
+                    size={36}
+                  />
                   <div>
                     <div style={{ fontWeight: 600 }}>{p.name}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>

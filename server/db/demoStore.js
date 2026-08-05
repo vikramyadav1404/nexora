@@ -36,6 +36,9 @@ function shapeDemoUser(u, extras = {}) {
     email: u.email,
     phone: u.phone || '',
     avatar: u.avatar || '',
+    avatarUrl: u.avatar || '',
+    avatarThumbUrl: u.avatar || '',
+    coverUrl: u.coverUrl || '',
     bio: u.bio || '',
     language: u.language || 'en',
     gender: u.gender || '',
@@ -428,12 +431,14 @@ function listPosts() {
 
 function getAuthor(id) {
   const u = findUserById(id);
-  if (!u) return { _id: id, id, name: 'User', avatar: '', points: 0, badges: [] };
+  if (!u) return { _id: id, id, name: 'User', avatar: '', avatarUrl: '', avatarThumbUrl: '', points: 0, badges: [] };
   return {
     _id: u.id,
     id: u.id,
     name: u.name,
     avatar: u.avatar || '',
+    avatarUrl: u.avatar || '',
+    avatarThumbUrl: u.avatar || '',
     points: u.points || 0,
     badges: u.badges || [],
     subscription: { plan: u.subscriptionPlan || 'free', expiresAt: null }

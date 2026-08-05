@@ -5,7 +5,7 @@ const { protect } = require('../middleware/auth');
 const { INTERESTS } = require('../db/interests');
 const { sendError } = require('../utils/respond');
 const {
-  shapeUser, shapePost, shapeQuestion, shapeAuthor, AUTHOR_FIELDS
+  shapeUser, shapePost, shapeQuestion, shapeAuthor, authorFields
 } = require('../db/helpers');
 
 // GET /api/spaces
@@ -51,7 +51,7 @@ router.get('/:id', protect, async (req, res) => {
 
     const posts = await Promise.all((postRows || []).map(async (p) => {
       const [{ data: author }, { data: media }, { data: likes }] = await Promise.all([
-        db.from('users').select(AUTHOR_FIELDS).eq('id', p.author_id).single(),
+        db.from('users').select(authorFields()).eq('id', p.author_id).single(),
         db.from('post_media').select('*').eq('post_id', p.id),
         db.from('post_likes').select('user_id').eq('post_id', p.id)
       ]);
@@ -71,7 +71,7 @@ router.get('/:id', protect, async (req, res) => {
       .limit(20);
 
     const questions = await Promise.all((qRows || []).map(async (q) => {
-      const { data: author } = await db.from('users').select(AUTHOR_FIELDS).eq('id', q.author_id).single();
+      const { data: author } = await db.from('users').select(authorFields()).eq('id', q.author_id).single();
       return shapeQuestion(q, {
         author: shapeAuthor(author),
         answers: [],

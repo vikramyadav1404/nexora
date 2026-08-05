@@ -369,12 +369,75 @@ router.get('/users/:id', protectDemo, async (req, res) => {
 });
 
 router.put('/users/profile', protectDemo, async (req, res) => {
+  // Mirrors the real route: multipart is refused rather than silently ignored.
+  if (/^multipart\/form-data/i.test(req.headers['content-type'] || '')) {
+    return res.status(415).json({
+      message: 'Send JSON. Images now upload via POST /api/uploads/presign, then PATCH /api/users/me/avatar.'
+    });
+  }
+
   const { name, firstName, middleName, lastName, bio, phone } = req.body;
   const composed = [firstName, middleName, lastName].map((s) => (s || '').trim()).filter(Boolean).join(' ');
   if (composed) req.userRaw.name = composed;
   else if (name) req.userRaw.name = String(name).trim();
   if (bio !== undefined) req.userRaw.bio = bio;
   if (phone !== undefined) req.userRaw.phone = phone;
+  res.json({ user: shapeDemoUser(req.userRaw) });
+});
+
+/**
+ * Profile media, demo edition.
+ *
+ * There is no object storage in demo mode, so presign hands back a `data:` URL
+ * sink instead of a signed PUT target and the client short-circuits the upload.
+ * The endpoints, request shapes and response shapes match the real API exactly,
+ * which is the whole point — the frontend cannot tell the difference.
+ */
+router.post('/uploads/presign', protectDemo, (req, res) => {
+  const kind = String(req.body?.kind || '').toLowerCase();
+  const mimeType = String(req.body?.mimeType || '').toLowerCase();
+
+  if (!['avatar', 'cover'].includes(kind)) {
+    return res.status(400).json({ message: 'kind must be one of: avatar, cover' });
+  }
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) {
+    return res.status(400).json({ message: 'Unsupported image type. Use image/jpeg, image/png, image/webp.' });
+  }
+
+  res.json({
+    key: `users/${req.user.id}/${kind}/${randomUUID()}.webp`,
+    bucket: kind === 'avatar' ? 'avatars' : 'covers',
+    signedUrl: '',
+    token: '',
+    expiresIn: 300,
+    contentType: mimeType,
+    demo: true
+  });
+});
+
+function attachDemoMedia(req, res, kind) {
+  const key = String(req.body?.key || '');
+  if (!key.startsWith(`users/${req.user.id}/${kind}/`)) {
+    return res.status(403).json({ message: 'That upload does not belong to you' });
+  }
+  // The client sends the cropped data URL alongside the key in demo mode; there
+  // is nowhere else for the bytes to live.
+  const dataUrl = String(req.body?.dataUrl || '');
+  if (kind === 'avatar') req.userRaw.avatar = dataUrl;
+  else req.userRaw.coverUrl = dataUrl;
+  res.json({ user: shapeDemoUser(req.userRaw) });
+}
+
+router.patch('/users/me/avatar', protectDemo, (req, res) => attachDemoMedia(req, res, 'avatar'));
+router.patch('/users/me/cover', protectDemo, (req, res) => attachDemoMedia(req, res, 'cover'));
+
+router.delete('/users/me/avatar', protectDemo, (req, res) => {
+  req.userRaw.avatar = '';
+  res.json({ user: shapeDemoUser(req.userRaw) });
+});
+
+router.delete('/users/me/cover', protectDemo, (req, res) => {
+  req.userRaw.coverUrl = '';
   res.json({ user: shapeDemoUser(req.userRaw) });
 });
 

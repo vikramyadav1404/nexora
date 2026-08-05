@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS users (
   phone TEXT DEFAULT '',
   password TEXT NOT NULL,
   avatar TEXT DEFAULT '',
+  avatar_key TEXT DEFAULT '',
+  avatar_thumb_url TEXT DEFAULT '',
+  cover_url TEXT DEFAULT '',
+  cover_key TEXT DEFAULT '',
   bio TEXT DEFAULT '',
   language TEXT DEFAULT 'en' CHECK (language IN ('en','hi','es','pt','zh','fr')),
 

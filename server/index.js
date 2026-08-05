@@ -6,6 +6,7 @@ const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
 const { apiLimiter } = require('./middleware/rateLimit');
+const { setMediaColumnSupport } = require('./db/helpers');
 
 dotenv.config();
 
@@ -129,6 +130,7 @@ function mountRealRoutes(appInstance) {
   appInstance.use('/api/subscriptions', require('./routes/subscriptions'));
   appInstance.use('/api/rewards', require('./routes/rewards'));
   appInstance.use('/api/users', require('./routes/users'));
+  appInstance.use('/api/uploads', require('./routes/uploads'));
   appInstance.use('/api/notifications', require('./routes/notifications'));
   appInstance.use('/api/bookmarks', require('./routes/bookmarks'));
   appInstance.use('/api/search', require('./routes/search'));
@@ -170,6 +172,9 @@ async function startServer(opts = {}) {
   if (demoMode) {
     const { initDemoStore } = require('./db/demoStore');
     await initDemoStore();
+
+    // The in-memory store is plain objects, so there is no migration to miss.
+    setMediaColumnSupport(true);
 
     app.get('/api/health', (req, res) =>
       res.json({
@@ -223,6 +228,19 @@ async function startServer(opts = {}) {
       }
     }
     console.log('Connected to Supabase Postgres');
+
+    // Migration 008 is optional at boot: probe for its columns rather than
+    // assuming them. Selecting a column PostgREST cannot find fails the whole
+    // query, so without this a deploy landing before the migration would 500
+    // the feed, leaderboard, search and every author lookup at once.
+    {
+      const { error } = await db.from('users').select('avatar_thumb_url, cover_url').limit(1);
+      setMediaColumnSupport(!error);
+      if (error) {
+        console.warn('Profile media columns absent — avatar/cover upload is disabled.');
+        console.warn('   Run server/db/migrations/008_profile_media.sql to enable it.');
+      }
+    }
   } catch (err) {
     console.error('Supabase setup error:', err.message);
     if (shouldListen) {

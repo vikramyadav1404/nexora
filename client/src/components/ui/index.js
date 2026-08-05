@@ -2,6 +2,7 @@ export { default as Avatar } from './Avatar';
 export { default as EmptyState } from './EmptyState';
 export { default as ErrorState } from './ErrorState';
 export { default as IconButton } from './IconButton';
+export { default as ImageCropper } from './ImageCropper';
 export { default as Lightbox } from './Lightbox';
 export { default as PostMedia } from './PostMedia';
 export { default as Sheet } from './Sheet';

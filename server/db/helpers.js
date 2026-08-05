@@ -1,7 +1,41 @@
 const bcrypt = require('bcryptjs');
 
+/**
+ * Migration 008 adds avatar_thumb_url and cover_url.
+ *
+ * PostgREST rejects an entire query when any selected column is missing, so
+ * naming them unconditionally means a deploy that lands before the migration
+ * has run returns 500 from the feed, the leaderboard, search, suggestions and
+ * every author lookup simultaneously. index.js probes for the columns once at
+ * boot; until it confirms them we select the pre-008 list, and shapeUser falls
+ * back to the full-size avatar for avatarThumbUrl.
+ *
+ * Optimistic default is false: a probe that never ran must not break the app.
+ */
+let hasMediaColumns = false;
+
+function setMediaColumnSupport(supported) {
+  hasMediaColumns = !!supported;
+}
+
+function mediaColumnsAvailable() {
+  return hasMediaColumns;
+}
+
+/** Append the 008 columns to an explicit select list, when they exist. */
+function withMediaColumns(fields, { cover = false } = {}) {
+  if (!hasMediaColumns) return fields;
+  return `${fields}, avatar_thumb_url${cover ? ', cover_url' : ''}`;
+}
+
 // fields we usually join onto posts/comments
-const AUTHOR_FIELDS = 'id, name, avatar, points, badges, subscription_plan, subscription_expires_at';
+const AUTHOR_FIELDS_BASE =
+  'id, name, avatar, points, badges, subscription_plan, subscription_expires_at';
+
+/** Call this rather than referencing a constant — the list is boot-dependent. */
+function authorFields() {
+  return withMediaColumns(AUTHOR_FIELDS_BASE);
+}
 
 // /uploads/... needs a full host when frontend and API are on different domains
 function publicAssetUrl(url) {
@@ -91,6 +125,12 @@ function shapeUser(row, extras = {}) {
     email: safe.email,
     phone: safe.phone || '',
     avatar: publicAssetUrl(safe.avatar || ''),
+    // avatarUrl mirrors avatar; the client reads avatarUrl, older callers still
+    // read avatar. Thumb falls back to full size so a row whose derivative has
+    // not been generated yet still renders something.
+    avatarUrl: publicAssetUrl(safe.avatar || ''),
+    avatarThumbUrl: publicAssetUrl(safe.avatar_thumb_url || safe.avatar || ''),
+    coverUrl: publicAssetUrl(safe.cover_url || ''),
     bio: safe.bio || '',
     language: safe.language || 'en',
     gender: safe.gender || '',
@@ -134,6 +174,8 @@ function shapeAuthor(row) {
     id: row.id,
     name: row.name,
     avatar: publicAssetUrl(row.avatar || ''),
+    avatarUrl: publicAssetUrl(row.avatar || ''),
+    avatarThumbUrl: publicAssetUrl(row.avatar_thumb_url || row.avatar || ''),
     points: row.points || 0,
     badges: row.badges || [],
     subscription: {
@@ -232,7 +274,7 @@ function shapeTransaction(t) {
 async function loadAuthorMap(db, ids) {
   const unique = [...new Set((ids || []).filter(Boolean))];
   if (!unique.length) return {};
-  const { data } = await db.from('users').select(AUTHOR_FIELDS).in('id', unique);
+  const { data } = await db.from('users').select(authorFields()).in('id', unique);
   return Object.fromEntries((data || []).map(a => [a.id, shapeAuthor(a)]));
 }
 
@@ -246,7 +288,10 @@ function groupBy(rows, key) {
 }
 
 module.exports = {
-  AUTHOR_FIELDS,
+  authorFields,
+  withMediaColumns,
+  setMediaColumnSupport,
+  mediaColumnsAvailable,
   loadAuthorMap,
   groupBy,
   publicAssetUrl,

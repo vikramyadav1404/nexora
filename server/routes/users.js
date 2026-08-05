@@ -1,23 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const { getSupabase } = require('../db/supabase');
-const { shapeUser, shapeAuthor } = require('../db/helpers');
+const { shapeUser, shapeAuthor, withMediaColumns, mediaColumnsAvailable } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendEmail, generateOTP } = require('../utils/email');
 const { INTERESTS, GENDERS, normalizeInterests } = require('../db/interests');
 const { ensureInterestContent } = require('../db/seedInterests');
 const { pushNotification, touchUserActivity } = require('../db/features');
-const { uploadMedia } = require('../utils/storage');
-const { optimizeImage } = require('../utils/image');
 const { sanitizeText, sanitizeNamePart, escapePostgrestValue } = require('../utils/validate');
 const { sendError } = require('../utils/respond');
-
-// memory buffer — works on serverless; uploadMedia handles cloud/local write
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }
-});
+const { MediaError, verifyUpload, buildDerivatives, cleanupPrevious } = require('../utils/profileMedia');
 
 async function getFriendIds(db, userId) {
   const { data } = await db.from('friendships').select('friend_id').eq('user_id', userId);
@@ -26,12 +18,14 @@ async function getFriendIds(db, userId) {
 
 async function getUsersByIds(db, ids) {
   if (!ids.length) return [];
-  const { data } = await db.from('users').select('id, name, avatar, email, points, badges').in('id', ids);
+  const { data } = await db.from('users').select(withMediaColumns('id, name, avatar, email, points, badges')).in('id', ids);
   return (data || []).map(u => ({
     _id: u.id,
     id: u.id,
     name: u.name,
     avatar: u.avatar,
+    avatarUrl: u.avatar,
+    avatarThumbUrl: u.avatar_thumb_url || u.avatar,
     email: u.email,
     points: u.points,
     badges: u.badges || []
@@ -49,7 +43,7 @@ router.get('/search', protect, async (req, res) => {
     const db = getSupabase();
     const { data, error } = await db
       .from('users')
-      .select('id, name, avatar, email, points, badges')
+      .select(withMediaColumns('id, name, avatar, email, points, badges'))
       .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
       .neq('id', req.user.id)
       .limit(10);
@@ -58,6 +52,7 @@ router.get('/search', protect, async (req, res) => {
     res.json({
       users: (data || []).map(u => ({
         _id: u.id, id: u.id, name: u.name, avatar: u.avatar,
+        avatarUrl: u.avatar, avatarThumbUrl: u.avatar_thumb_url || u.avatar,
         email: u.email, points: u.points, badges: u.badges || []
       }))
     });
@@ -128,7 +123,7 @@ router.get('/suggestions', protect, async (req, res) => {
 
     let query = db
       .from('users')
-      .select('id, name, avatar, bio, points, badges, interests, is_creator, creator_interest')
+      .select(withMediaColumns('id, name, avatar, bio, points, badges, interests, is_creator, creator_interest', { cover: true }))
       .eq('is_active', true)
       .neq('id', req.user.id)
       .limit(40);
@@ -242,9 +237,24 @@ router.get('/:id', protect, async (req, res) => {
   } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
 
-// PUT /api/users/profile
-router.put('/profile', protect, upload.single('avatar'), async (req, res) => {
+/**
+ * PUT /api/users/profile — text fields only.
+ *
+ * This used to accept a multipart avatar and stream it through the API. That
+ * path is gone: Vercel caps a serverless body at ~4.5MB, and images now go
+ * browser → storage directly via /api/uploads/presign, then PATCH me/avatar.
+ */
+router.put('/profile', protect, async (req, res) => {
   try {
+    // Without this, a stale multipart caller gets a cheerful 200 and no change:
+    // express.json() ignores the body, so `updates` comes out empty. Failing
+    // loudly is the difference between a five-second fix and an afternoon.
+    if (/^multipart\/form-data/i.test(req.headers['content-type'] || '')) {
+      return res.status(415).json({
+        message: 'Send JSON. Images now upload via POST /api/uploads/presign, then PATCH /api/users/me/avatar.'
+      });
+    }
+
     const { name, firstName, middleName, lastName, bio, phone } = req.body;
     const updates = {};
     const composed = [firstName, middleName, lastName]
@@ -255,11 +265,6 @@ router.put('/profile', protect, upload.single('avatar'), async (req, res) => {
     else if (name) updates.name = sanitizeNamePart(name, 120);
     if (bio !== undefined) updates.bio = sanitizeText(bio, 500);
     if (phone !== undefined) updates.phone = sanitizeText(phone, 30);
-    if (req.file) {
-      const { file: ready } = await optimizeImage(req.file, { kind: 'avatar' });
-      const up = await uploadMedia(ready, { bucket: 'avatars', folder: req.user.id });
-      updates.avatar = up.url;
-    }
 
     const { data: row, error } = await getSupabase()
       .from('users')
@@ -272,6 +277,104 @@ router.put('/profile', protect, upload.single('avatar'), async (req, res) => {
     res.json({ user: shapeUser(row) });
   } catch (err) { sendError(res, err, req, "Could not complete that request"); }
 });
+
+/**
+ * Profile media — attach and remove.
+ *
+ * The bytes never pass through here. The browser has already PUT the object to
+ * a signed URL from POST /api/uploads/presign and sends us just the key; we
+ * confirm it is ours, confirm it is really an image, then persist.
+ */
+const MEDIA_COLUMNS = {
+  avatar: { url: 'avatar', key: 'avatar_key', extra: ['avatar_thumb_url'] },
+  cover: { url: 'cover_url', key: 'cover_key', extra: [] }
+};
+
+async function attachMedia(req, res, kind) {
+  try {
+    if (!mediaColumnsAvailable()) {
+      return res.status(503).json({ message: 'Image uploads are not enabled on this server yet.' });
+    }
+    const key = String(req.body?.key || '');
+    const cols = MEDIA_COLUMNS[kind];
+    const db = getSupabase();
+
+    const { bucket } = await verifyUpload({ key, kind, userId: req.user.id });
+
+    // Read the outgoing key before overwriting it, so the old object can be
+    // cleaned up once the new one is safely saved.
+    const { data: before } = await db
+      .from('users')
+      .select(cols.key)
+      .eq('id', req.user.id)
+      .single();
+    const previousKey = before?.[cols.key] || '';
+
+    const updates = await buildDerivatives({ bucket, key, kind });
+
+    const { data: row, error } = await db
+      .from('users')
+      .update(updates)
+      .eq('id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    if (previousKey && previousKey !== key) {
+      await cleanupPrevious({ kind, previousKey });
+    }
+
+    res.json({ user: shapeUser(row) });
+  } catch (err) {
+    if (err instanceof MediaError) {
+      return res.status(err.status).json({ message: err.message });
+    }
+    sendError(res, err, req, `Could not update your ${kind}`);
+  }
+}
+
+async function removeMedia(req, res, kind) {
+  try {
+    const cols = MEDIA_COLUMNS[kind];
+    const db = getSupabase();
+
+    const { data: before } = await db
+      .from('users')
+      .select(cols.key)
+      .eq('id', req.user.id)
+      .single();
+    const previousKey = before?.[cols.key] || '';
+
+    const updates = { [cols.url]: '', [cols.key]: '' };
+    for (const col of cols.extra) updates[col] = '';
+
+    const { data: row, error } = await db
+      .from('users')
+      .update(updates)
+      .eq('id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    await cleanupPrevious({ kind, previousKey });
+
+    res.json({ user: shapeUser(row) });
+  } catch (err) { sendError(res, err, req, `Could not remove your ${kind}`); }
+}
+
+// PATCH /api/users/me/avatar   — body: { key }
+router.patch('/me/avatar', protect, (req, res) => attachMedia(req, res, 'avatar'));
+
+// DELETE /api/users/me/avatar
+router.delete('/me/avatar', protect, (req, res) => removeMedia(req, res, 'avatar'));
+
+// PATCH /api/users/me/cover    — body: { key }
+router.patch('/me/cover', protect, (req, res) => attachMedia(req, res, 'cover'));
+
+// DELETE /api/users/me/cover
+router.delete('/me/cover', protect, (req, res) => removeMedia(req, res, 'cover'));
 
 // POST /api/users/friend-request/:id
 router.post('/friend-request/:id', protect, async (req, res) => {
