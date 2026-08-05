@@ -133,11 +133,29 @@ async function rotateRefreshToken(presented, { userAgent = '', ip = '' } = {}) {
   const db = getSupabase();
   const hash = hashToken(presented);
 
-  const { data: row } = await db
+  const { data: row, error } = await db
     .from('refresh_tokens')
     .select('id, user_id, expires_at, revoked_at')
     .eq('token_hash', hash)
     .maybeSingle();
+
+  /*
+   * Distinguish "no such token" from "no such table".
+   *
+   * Swallowing the error here made a missing migration look like an ordinary
+   * expired session: every refresh returned "Session expired", sessions died
+   * after fifteen minutes, and the message pointed at the token rather than at
+   * the schema. Surfacing it means the operator reads the actual cause.
+   */
+  if (error) {
+    if (/refresh_tokens/i.test(error.message || '') || error.code === 'PGRST205') {
+      throw new Error(
+        'Database schema incomplete: refresh_tokens table is missing. ' +
+        'Run server/db/migrations/009_auth_tokens.sql in the Supabase SQL Editor.'
+      );
+    }
+    throw error;
+  }
 
   if (!row) throw new RefreshError('Invalid refresh token');
 

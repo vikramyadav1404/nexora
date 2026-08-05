@@ -244,6 +244,23 @@ async function startServer(opts = {}) {
         console.warn('   Run server/db/migrations/008_profile_media.sql to enable it.');
       }
     }
+
+    /*
+     * The refresh_tokens table is not optional the way the media columns are.
+     * Without it every login still succeeds and then dies fifteen minutes later
+     * when the first refresh fails — which reads as "the app logs me out at
+     * random" rather than "a migration is missing". Say so loudly at boot.
+     */
+    {
+      const { error } = await db.from('refresh_tokens').select('id').limit(1);
+      if (error) {
+        console.error('');
+        console.error('  refresh_tokens table is MISSING.');
+        console.error('  Logins will work, then every session will end after 15 minutes.');
+        console.error('  Run server/db/migrations/009_auth_tokens.sql in the Supabase SQL Editor.');
+        console.error('');
+      }
+    }
   } catch (err) {
     console.error('Supabase setup error:', err.message);
     if (shouldListen) {
