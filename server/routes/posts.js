@@ -12,7 +12,7 @@ const { uploadMedia } = require('../utils/storage');
 const { optimizeImage } = require('../utils/image');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
-const { sendError } = require('../utils/respond');
+const { sendError, asyncHandler } = require('../utils/respond');
 
 // memory storage works on Vercel; uploadMedia sends buffer to Supabase / local disk
 const upload = multer({
@@ -86,64 +86,62 @@ function decodeCursor(cursor) {
 }
 
 // GET /api/posts — personalized by interests + follows when available
-router.get('/', protect, async (req, res) => {
-  try {
-    const db = getSupabase();
-    const interests = req.userRow.interests || [];
-    const personalized = req.query.personalized !== '0';
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
-    const { ts, id } = decodeCursor(req.query.cursor);
+router.get('/', protect, asyncHandler(async (req, res) => {
+  const db = getSupabase();
+  const interests = req.userRow.interests || [];
+  const personalized = req.query.personalized !== '0';
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
+  const { ts, id } = decodeCursor(req.query.cursor);
 
-    /*
-     * Ranking and paging both happen in SQL now.
-     *
-     * The previous implementation fetched a 60-row window, sorted it in JS and
-     * sliced a page out. That capped the feed at 60 posts, and because the
-     * window size changed with the page number the sort order changed too —
-     * so infinite scroll could show a post twice or skip it entirely.
-     */
-    let rows;
-    const { data, error } = await db.rpc('feed_for_user', {
-      p_user_id: req.user.id,
-      p_cursor_ts: ts,
-      p_cursor_id: id,
-      p_limit: limit + 1, // one extra row tells us whether more exist
-      p_personalized: personalized
-    });
+  /*
+   * Ranking and paging both happen in SQL now.
+   *
+   * The previous implementation fetched a 60-row window, sorted it in JS and
+   * sliced a page out. That capped the feed at 60 posts, and because the
+   * window size changed with the page number the sort order changed too —
+   * so infinite scroll could show a post twice or skip it entirely.
+   */
+  let rows;
+  const { data, error } = await db.rpc('feed_for_user', {
+    p_user_id: req.user.id,
+    p_cursor_ts: ts,
+    p_cursor_id: id,
+    p_limit: limit + 1, // one extra row tells us whether more exist
+    p_personalized: personalized
+  });
 
-    if (error) {
-      // The RPC ships in migration 006; fall back to plain recency so an
-      // un-migrated database still serves a (correct, unranked) feed.
-      if (!feedRpcWarned) {
-        feedRpcWarned = true;
-        console.warn(
-          `feed_for_user unavailable (${error.message}); serving unranked feed. ` +
-          'Run server/db/migrations/006_feed.sql to enable ranking.'
-        );
-      }
-      let q = db.from('posts').select('*').eq('is_public', true);
-      if (ts) q = q.lt('created_at', ts);
-      const fallback = await q.order('created_at', { ascending: false }).limit(limit + 1);
-      if (fallback.error) throw fallback.error;
-      rows = fallback.data || [];
-    } else {
-      rows = data || [];
+  if (error) {
+    // The RPC ships in migration 006; fall back to plain recency so an
+    // un-migrated database still serves a (correct, unranked) feed.
+    if (!feedRpcWarned) {
+      feedRpcWarned = true;
+      console.warn(
+        `feed_for_user unavailable (${error.message}); serving unranked feed. ` +
+        'Run server/db/migrations/006_feed.sql to enable ranking.'
+      );
     }
+    let q = db.from('posts').select('*').eq('is_public', true);
+    if (ts) q = q.lt('created_at', ts);
+    const fallback = await q.order('created_at', { ascending: false }).limit(limit + 1);
+    if (fallback.error) throw fallback.error;
+    rows = fallback.data || [];
+  } else {
+    rows = data || [];
+  }
 
-    const hasMore = rows.length > limit;
-    const pageRows = hasMore ? rows.slice(0, limit) : rows;
-    const posts = await loadPostBundles(db, pageRows);
+  const hasMore = rows.length > limit;
+  const pageRows = hasMore ? rows.slice(0, limit) : rows;
+  const posts = await loadPostBundles(db, pageRows);
 
-    res.json({
-      posts,
-      // Opaque keyset cursor — pass it back as ?cursor= for the next page.
-      nextCursor: hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null,
-      hasMore,
-      personalized: personalized && interests.length > 0,
-      interests
-    });
-  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
-});
+  res.json({
+    posts,
+    // Opaque keyset cursor — pass it back as ?cursor= for the next page.
+    nextCursor: hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null,
+    hasMore,
+    personalized: personalized && interests.length > 0,
+    interests
+  });
+}, "Could not load the feed"));
 
 // POST /api/posts
 router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, res) => {
@@ -239,117 +237,109 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
 });
 
 // POST /api/posts/:id/like
-router.post('/:id/like', protect, async (req, res) => {
-  try {
-    const db = getSupabase();
-    const postId = req.params.id;
-    const userId = req.user.id;
+router.post('/:id/like', protect, asyncHandler(async (req, res) => {
+  const db = getSupabase();
+  const postId = req.params.id;
+  const userId = req.user.id;
 
-    const { data: existing } = await db
-      .from('post_likes')
-      .select('*')
-      .eq('post_id', postId)
-      .eq('user_id', userId)
-      .maybeSingle();
+  const { data: existing } = await db
+    .from('post_likes')
+    .select('*')
+    .eq('post_id', postId)
+    .eq('user_id', userId)
+    .maybeSingle();
 
-    if (existing) {
-      await db.from('post_likes').delete().eq('post_id', postId).eq('user_id', userId);
-    } else {
-      await db.from('post_likes').insert({ post_id: postId, user_id: userId });
-      const { data: likedPost } = await db.from('posts').select('author_id').eq('id', postId).maybeSingle();
-      if (likedPost?.author_id && likedPost.author_id !== userId) {
-        pushNotification(likedPost.author_id, {
-          type: 'like',
-          title: `${req.user.name} liked your post`,
-          body: '',
-          link: '/feed'
-        }).catch(() => {});
-      }
-    }
-
-    const { count } = await db
-      .from('post_likes')
-      .select('*', { count: 'exact', head: true })
-      .eq('post_id', postId);
-
-    res.json({ likes: count || 0, liked: !existing });
-  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
-});
-
-// POST /api/posts/:id/comment
-router.post('/:id/comment', protect, async (req, res) => {
-  try {
-    const content = sanitizeText(req.body.content, 2000);
-    if (!content) return res.status(400).json({ message: 'Comment cannot be empty' });
-
-    const db = getSupabase();
-    const { data: post } = await db.from('posts').select('id, author_id').eq('id', req.params.id).maybeSingle();
-    if (!post) return res.status(404).json({ message: 'Post not found' });
-
-    const { error } = await db.from('post_comments').insert({
-      post_id: req.params.id,
-      author_id: req.user.id,
-      content
-    });
-    if (error) throw error;
-
-    if (post.author_id && post.author_id !== req.user.id) {
-      pushNotification(post.author_id, {
-        type: 'comment',
-        title: `${req.user.name} commented on your post`,
-        body: content.slice(0, 120),
+  if (existing) {
+    await db.from('post_likes').delete().eq('post_id', postId).eq('user_id', userId);
+  } else {
+    await db.from('post_likes').insert({ post_id: postId, user_id: userId });
+    const { data: likedPost } = await db.from('posts').select('author_id').eq('id', postId).maybeSingle();
+    if (likedPost?.author_id && likedPost.author_id !== userId) {
+      pushNotification(likedPost.author_id, {
+        type: 'like',
+        title: `${req.user.name} liked your post`,
+        body: '',
         link: '/feed'
       }).catch(() => {});
     }
+  }
 
-    const { data: comments } = await db
-      .from('post_comments')
-      .select('*')
-      .eq('post_id', req.params.id)
-      .order('created_at', { ascending: true });
+  const { count } = await db
+    .from('post_likes')
+    .select('*', { count: 'exact', head: true })
+    .eq('post_id', postId);
 
-    const authorIds = [...new Set((comments || []).map(c => c.author_id))];
-    const { data: authors } = await db.from('users').select(withMediaColumns('id, name, avatar')).in('id', authorIds);
-    const map = Object.fromEntries((authors || []).map(a => [a.id, a]));
+  res.json({ likes: count || 0, liked: !existing });
+}, "Could not load the feed"));
 
-    res.json({
-      comments: (comments || []).map(c => ({
-        _id: c.id,
-        author: shapeAuthor(map[c.author_id] || { id: c.author_id }),
-        content: c.content,
-        createdAt: c.created_at
-      }))
-    });
-  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
-});
+// POST /api/posts/:id/comment
+router.post('/:id/comment', protect, asyncHandler(async (req, res) => {
+  const content = sanitizeText(req.body.content, 2000);
+  if (!content) return res.status(400).json({ message: 'Comment cannot be empty' });
+
+  const db = getSupabase();
+  const { data: post } = await db.from('posts').select('id, author_id').eq('id', req.params.id).maybeSingle();
+  if (!post) return res.status(404).json({ message: 'Post not found' });
+
+  const { error } = await db.from('post_comments').insert({
+    post_id: req.params.id,
+    author_id: req.user.id,
+    content
+  });
+  if (error) throw error;
+
+  if (post.author_id && post.author_id !== req.user.id) {
+    pushNotification(post.author_id, {
+      type: 'comment',
+      title: `${req.user.name} commented on your post`,
+      body: content.slice(0, 120),
+      link: '/feed'
+    }).catch(() => {});
+  }
+
+  const { data: comments } = await db
+    .from('post_comments')
+    .select('*')
+    .eq('post_id', req.params.id)
+    .order('created_at', { ascending: true });
+
+  const authorIds = [...new Set((comments || []).map(c => c.author_id))];
+  const { data: authors } = await db.from('users').select(withMediaColumns('id, name, avatar')).in('id', authorIds);
+  const map = Object.fromEntries((authors || []).map(a => [a.id, a]));
+
+  res.json({
+    comments: (comments || []).map(c => ({
+      _id: c.id,
+      author: shapeAuthor(map[c.author_id] || { id: c.author_id }),
+      content: c.content,
+      createdAt: c.created_at
+    }))
+  });
+}, "Could not load the feed"));
 
 // POST /api/posts/:id/share
-router.post('/:id/share', protect, async (req, res) => {
-  try {
-    const db = getSupabase();
-    const { data: post } = await db.from('posts').select('shares').eq('id', req.params.id).maybeSingle();
-    if (!post) return res.status(404).json({ message: 'Post not found' });
+router.post('/:id/share', protect, asyncHandler(async (req, res) => {
+  const db = getSupabase();
+  const { data: post } = await db.from('posts').select('shares').eq('id', req.params.id).maybeSingle();
+  if (!post) return res.status(404).json({ message: 'Post not found' });
 
-    const shares = (post.shares || 0) + 1;
-    const { error } = await db.from('posts').update({ shares }).eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ shares });
-  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
-});
+  const shares = (post.shares || 0) + 1;
+  const { error } = await db.from('posts').update({ shares }).eq('id', req.params.id);
+  if (error) throw error;
+  res.json({ shares });
+}, "Could not load the feed"));
 
 // DELETE /api/posts/:id
-router.delete('/:id', protect, async (req, res) => {
-  try {
-    const db = getSupabase();
-    const { data: post } = await db.from('posts').select('*').eq('id', req.params.id).maybeSingle();
-    if (!post) return res.status(404).json({ message: 'Post not found' });
-    if (post.author_id !== req.user.id) {
-      return res.status(403).json({ message: 'Not authorized to delete this post' });
-    }
-    const { error } = await db.from('posts').delete().eq('id', req.params.id);
-    if (error) throw error;
-    res.json({ message: 'Post deleted' });
-  } catch (err) { sendError(res, err, req, "Could not load the feed"); }
-});
+router.delete('/:id', protect, asyncHandler(async (req, res) => {
+  const db = getSupabase();
+  const { data: post } = await db.from('posts').select('*').eq('id', req.params.id).maybeSingle();
+  if (!post) return res.status(404).json({ message: 'Post not found' });
+  if (post.author_id !== req.user.id) {
+    return res.status(403).json({ message: 'Not authorized to delete this post' });
+  }
+  const { error } = await db.from('posts').delete().eq('id', req.params.id);
+  if (error) throw error;
+  res.json({ message: 'Post deleted' });
+}, "Could not load the feed"));
 
 module.exports = router;

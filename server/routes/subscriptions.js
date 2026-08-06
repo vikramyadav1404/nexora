@@ -6,7 +6,7 @@ const { getSupabase } = require('../db/supabase');
 const { shapeTransaction } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
-const { sendError } = require('../utils/respond');
+const { sendError, asyncHandler } = require('../utils/respond');
 
 const PLANS = {
   bronze: { price: 10000, name: 'Bronze', description: '5 questions/day' },
@@ -114,120 +114,112 @@ router.get('/plans', (req, res) => {
 });
 
 // POST /api/subscriptions/create-order
-router.post('/create-order', protect, async (req, res) => {
-  try {
-    if (!isPaymentWindowOpen()) {
-      const istDate = new Date(Date.now() + (5.5 * 60 * 60 * 1000));
-      return res.status(403).json({
-        message: `Payments are only accepted between 10:00 AM - 11:00 AM IST. Current IST time: ${istDate.getUTCHours()}:${String(istDate.getUTCMinutes()).padStart(2, '0')}`,
-        windowOpen: false
-      });
-    }
+router.post('/create-order', protect, asyncHandler(async (req, res) => {
+  if (!isPaymentWindowOpen()) {
+    const istDate = new Date(Date.now() + (5.5 * 60 * 60 * 1000));
+    return res.status(403).json({
+      message: `Payments are only accepted between 10:00 AM - 11:00 AM IST. Current IST time: ${istDate.getUTCHours()}:${String(istDate.getUTCMinutes()).padStart(2, '0')}`,
+      windowOpen: false
+    });
+  }
 
-    const { plan } = req.body;
-    if (!PLANS[plan]) return res.status(400).json({ message: 'Invalid plan' });
+  const { plan } = req.body;
+  if (!PLANS[plan]) return res.status(400).json({ message: 'Invalid plan' });
 
-    const razorpay = getRazorpay();
-    let orderId;
+  const razorpay = getRazorpay();
+  let orderId;
 
-    if (razorpay) {
-      const order = await razorpay.orders.create({
-        amount: PLANS[plan].price,
-        currency: 'INR',
-        receipt: `nexora_${req.user.id}_${Date.now()}`
-      });
-      orderId = order.id;
-    } else {
-      orderId = `order_mock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    }
-
-    const { data: transaction, error } = await getSupabase().from('transactions').insert({
-      user_id: req.user.id,
-      plan,
-      amount: PLANS[plan].price / 100,
-      razorpay_order_id: orderId,
-      invoice_number: `INV-${Date.now()}`,
-      status: 'pending'
-    }).select().single();
-
-    if (error) throw error;
-
-    res.json({
-      orderId,
+  if (razorpay) {
+    const order = await razorpay.orders.create({
       amount: PLANS[plan].price,
       currency: 'INR',
-      plan,
-      transactionId: transaction.id,
-      keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_mock',
-      // Informational only — the server decides this, and re-derives it on verify
-      isMock: !razorpay
+      receipt: `nexora_${req.user.id}_${Date.now()}`
     });
-  } catch (err) {
-    sendError(res, err, req, 'Could not start checkout');
+    orderId = order.id;
+  } else {
+    orderId = `order_mock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   }
-});
+
+  const { data: transaction, error } = await getSupabase().from('transactions').insert({
+    user_id: req.user.id,
+    plan,
+    amount: PLANS[plan].price / 100,
+    razorpay_order_id: orderId,
+    invoice_number: `INV-${Date.now()}`,
+    status: 'pending'
+  }).select().single();
+
+  if (error) throw error;
+
+  res.json({
+    orderId,
+    amount: PLANS[plan].price,
+    currency: 'INR',
+    plan,
+    transactionId: transaction.id,
+    keyId: process.env.RAZORPAY_KEY_ID || 'rzp_test_mock',
+    // Informational only — the server decides this, and re-derives it on verify
+    isMock: !razorpay
+  });
+}, 'Could not start checkout'));
 
 // POST /api/subscriptions/verify-payment
-router.post('/verify-payment', protect, async (req, res) => {
-  try {
-    const { razorpayOrderId, razorpayPaymentId, razorpaySignature, transactionId } = req.body;
-    const db = getSupabase();
+router.post('/verify-payment', protect, asyncHandler(async (req, res) => {
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature, transactionId } = req.body;
+  const db = getSupabase();
 
-    if (!transactionId) {
-      return res.status(400).json({ message: 'transactionId is required' });
-    }
-
-    // Scoped to the caller — previously any user could verify anyone's transaction
-    const { data: transaction } = await db
-      .from('transactions')
-      .select('*')
-      .eq('id', transactionId)
-      .eq('user_id', req.user.id)
-      .maybeSingle();
-
-    if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
-
-    // Idempotent: a double-submitted callback must not extend the plan twice
-    if (transaction.status === 'success') {
-      return res.json({
-        message: 'Payment already verified',
-        subscription: { plan: transaction.plan }
-      });
-    }
-    if (transaction.status === 'failed') {
-      return res.status(400).json({ message: 'This transaction already failed. Start a new checkout.' });
-    }
-
-    // Mock mode is a server-side fact. When real keys are configured, the
-    // signature is always verified — there is no client-controlled bypass.
-    if (!isMockMode()) {
-      if (transaction.razorpay_order_id !== razorpayOrderId) {
-        return res.status(400).json({ message: 'Order mismatch' });
-      }
-      if (!verifySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
-        await db.from('transactions').update({ status: 'failed' }).eq('id', transaction.id);
-        return res.status(400).json({ message: 'Payment verification failed' });
-      }
-    }
-
-    const { user, expiresAt } = await activateSubscription(db, transaction, {
-      paymentId: razorpayPaymentId || 'mock_payment',
-      signature: razorpaySignature || ''
-    });
-
-    await emailInvoice(user, transaction, expiresAt);
-
-    res.json({
-      message: 'Payment verified! Subscription activated.',
-      subscription: {
-        plan: user.subscription_plan,
-        expiresAt: user.subscription_expires_at
-      }
-    });
-  } catch (err) {
-    sendError(res, err, req, 'Could not verify that payment');
+  if (!transactionId) {
+    return res.status(400).json({ message: 'transactionId is required' });
   }
-});
+
+  // Scoped to the caller — previously any user could verify anyone's transaction
+  const { data: transaction } = await db
+    .from('transactions')
+    .select('*')
+    .eq('id', transactionId)
+    .eq('user_id', req.user.id)
+    .maybeSingle();
+
+  if (!transaction) return res.status(404).json({ message: 'Transaction not found' });
+
+  // Idempotent: a double-submitted callback must not extend the plan twice
+  if (transaction.status === 'success') {
+    return res.json({
+      message: 'Payment already verified',
+      subscription: { plan: transaction.plan }
+    });
+  }
+  if (transaction.status === 'failed') {
+    return res.status(400).json({ message: 'This transaction already failed. Start a new checkout.' });
+  }
+
+  // Mock mode is a server-side fact. When real keys are configured, the
+  // signature is always verified — there is no client-controlled bypass.
+  if (!isMockMode()) {
+    if (transaction.razorpay_order_id !== razorpayOrderId) {
+      return res.status(400).json({ message: 'Order mismatch' });
+    }
+    if (!verifySignature(razorpayOrderId, razorpayPaymentId, razorpaySignature)) {
+      await db.from('transactions').update({ status: 'failed' }).eq('id', transaction.id);
+      return res.status(400).json({ message: 'Payment verification failed' });
+    }
+  }
+
+  const { user, expiresAt } = await activateSubscription(db, transaction, {
+    paymentId: razorpayPaymentId || 'mock_payment',
+    signature: razorpaySignature || ''
+  });
+
+  await emailInvoice(user, transaction, expiresAt);
+
+  res.json({
+    message: 'Payment verified! Subscription activated.',
+    subscription: {
+      plan: user.subscription_plan,
+      expiresAt: user.subscription_expires_at
+    }
+  });
+}, 'Could not verify that payment'));
 
 /**
  * POST /api/subscriptions/webhook — Razorpay server-to-server callback.
@@ -294,20 +286,16 @@ router.post('/webhook', async (req, res) => {
 });
 
 // GET /api/subscriptions/history
-router.get('/history', protect, async (req, res) => {
-  try {
-    const { data, error } = await getSupabase()
-      .from('transactions')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false });
+router.get('/history', protect, asyncHandler(async (req, res) => {
+  const { data, error } = await getSupabase()
+    .from('transactions')
+    .select('*')
+    .eq('user_id', req.user.id)
+    .order('created_at', { ascending: false });
 
-    if (error) throw error;
-    res.json({ transactions: (data || []).map(shapeTransaction) });
-  } catch (err) {
-    sendError(res, err, req, 'Could not load billing history');
-  }
-});
+  if (error) throw error;
+  res.json({ transactions: (data || []).map(shapeTransaction) });
+}, 'Could not load billing history'));
 
 // index.js mounts this router directly, so the router must be the export itself.
 // isMockMode rides along as a property for the tests and the cron sweep.

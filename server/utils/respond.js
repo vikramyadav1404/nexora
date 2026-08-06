@@ -107,4 +107,46 @@ function sendError(res, err, req, message = 'Something went wrong on our end', s
   });
 }
 
-module.exports = { isDev, sendError, requestId };
+/**
+ * Wrap an async route handler so a rejected promise lands in sendError.
+ *
+ * Almost every handler ended in the same two lines:
+ *
+ *   try {
+ *     ...
+ *   } catch (err) { sendError(res, err, req, 'Could not load the thing'); }
+ *
+ * The message is worth keeping — "Could not load your two-factor status" is more
+ * use to someone than a generic string — so it moves here as the second
+ * argument rather than being dropped into one catch-all middleware.
+ *
+ *   router.get('/x', protect, asyncHandler(async (req, res) => {
+ *     ...
+ *   }, 'Could not load the thing'));
+ *
+ * `next` is still passed through, so a handler that wants Express's own error
+ * path can call it. Anything thrown or rejected is routed to sendError with the
+ * same arguments the hand-written catch used, so responses do not change.
+ */
+function asyncHandler(handler, message) {
+  return function wrapped(req, res, next) {
+    /*
+     * The try is not redundant.
+     *
+     * Promise.resolve(...).catch() only sees a rejection. A handler that throws
+     * *synchronously* — before it ever returns a promise — throws straight out
+     * of this function, past the .catch, into Express's default error handler,
+     * which answers with an HTML error page instead of the JSON contract every
+     * caller expects. Every handler converted so far is `async` and so cannot
+     * do that, but the next one added might not be, and the failure would look
+     * like the endpoint returning HTML for no reason.
+     */
+    try {
+      Promise.resolve(handler(req, res, next)).catch((err) => sendError(res, err, req, message));
+    } catch (err) {
+      sendError(res, err, req, message);
+    }
+  };
+}
+
+module.exports = { isDev, sendError, requestId, asyncHandler };

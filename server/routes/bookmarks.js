@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
-const { sendError } = require('../utils/respond');
+const { sendError, asyncHandler } = require('../utils/respond');
 const {
   shapePost, shapeQuestion, shapeAuthor, authorFields,
   withMediaColumns
@@ -53,82 +53,76 @@ async function loadQuestionLite(db, q) {
 }
 
 // GET /api/bookmarks
-router.get('/', protect, async (req, res) => {
-  try {
-    const db = getSupabase();
-    const { data: rows, error } = await db
-      .from('bookmarks')
-      .select('*')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false });
+router.get('/', protect, asyncHandler(async (req, res) => {
+  const db = getSupabase();
+  const { data: rows, error } = await db
+    .from('bookmarks')
+    .select('*')
+    .eq('user_id', req.user.id)
+    .order('created_at', { ascending: false });
 
-    if (error) throw error;
+  if (error) throw error;
 
-    const enriched = [];
-    for (const b of rows || []) {
-      if (b.target_type === 'post') {
-        const { data: post } = await db.from('posts').select('*').eq('id', b.target_id).maybeSingle();
-        if (!post) continue;
-        enriched.push({
-          type: 'post',
-          id: b.target_id,
-          createdAt: b.created_at,
-          item: await loadPostBundle(db, post)
-        });
-      } else if (b.target_type === 'question') {
-        const { data: q } = await db.from('questions').select('*').eq('id', b.target_id).maybeSingle();
-        if (!q) continue;
-        enriched.push({
-          type: 'question',
-          id: b.target_id,
-          createdAt: b.created_at,
-          item: await loadQuestionLite(db, q)
-        });
-      }
+  const enriched = [];
+  for (const b of rows || []) {
+    if (b.target_type === 'post') {
+      const { data: post } = await db.from('posts').select('*').eq('id', b.target_id).maybeSingle();
+      if (!post) continue;
+      enriched.push({
+        type: 'post',
+        id: b.target_id,
+        createdAt: b.created_at,
+        item: await loadPostBundle(db, post)
+      });
+    } else if (b.target_type === 'question') {
+      const { data: q } = await db.from('questions').select('*').eq('id', b.target_id).maybeSingle();
+      if (!q) continue;
+      enriched.push({
+        type: 'question',
+        id: b.target_id,
+        createdAt: b.created_at,
+        item: await loadQuestionLite(db, q)
+      });
     }
+  }
 
-    res.json({ bookmarks: enriched });
-  } catch (err) { sendError(res, err, req, "Could not update your saved items"); }
-});
+  res.json({ bookmarks: enriched });
+}, "Could not update your saved items"));
 
 // POST /api/bookmarks  { type, id }
-router.post('/', protect, async (req, res) => {
-  try {
-    const { type, id } = req.body;
-    if (!type || !id || !['post', 'question'].includes(type)) {
-      return res.status(400).json({ message: 'type and id required' });
-    }
+router.post('/', protect, asyncHandler(async (req, res) => {
+  const { type, id } = req.body;
+  if (!type || !id || !['post', 'question'].includes(type)) {
+    return res.status(400).json({ message: 'type and id required' });
+  }
 
-    const db = getSupabase();
-    const { error } = await db.from('bookmarks').upsert({
-      user_id: req.user.id,
-      target_type: type,
-      target_id: id
-    }, { onConflict: 'user_id,target_type,target_id' });
+  const db = getSupabase();
+  const { error } = await db.from('bookmarks').upsert({
+    user_id: req.user.id,
+    target_type: type,
+    target_id: id
+  }, { onConflict: 'user_id,target_type,target_id' });
 
-    if (error) throw error;
-    res.json({ message: 'Saved', bookmarked: true });
-  } catch (err) { sendError(res, err, req, "Could not update your saved items"); }
-});
+  if (error) throw error;
+  res.json({ message: 'Saved', bookmarked: true });
+}, "Could not update your saved items"));
 
 // DELETE /api/bookmarks  { type, id }
-router.delete('/', protect, async (req, res) => {
-  try {
-    const { type, id } = req.body;
-    if (!type || !id) {
-      return res.status(400).json({ message: 'type and id required' });
-    }
+router.delete('/', protect, asyncHandler(async (req, res) => {
+  const { type, id } = req.body;
+  if (!type || !id) {
+    return res.status(400).json({ message: 'type and id required' });
+  }
 
-    const { error } = await getSupabase()
-      .from('bookmarks')
-      .delete()
-      .eq('user_id', req.user.id)
-      .eq('target_type', type)
-      .eq('target_id', id);
+  const { error } = await getSupabase()
+    .from('bookmarks')
+    .delete()
+    .eq('user_id', req.user.id)
+    .eq('target_type', type)
+    .eq('target_id', id);
 
-    if (error) throw error;
-    res.json({ message: 'Removed', bookmarked: false });
-  } catch (err) { sendError(res, err, req, "Could not update your saved items"); }
-});
+  if (error) throw error;
+  res.json({ message: 'Removed', bookmarked: false });
+}, "Could not update your saved items"));
 
 module.exports = router;

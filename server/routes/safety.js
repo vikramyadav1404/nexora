@@ -5,89 +5,81 @@ const { protect } = require('../middleware/auth');
 const { shapeUser } = require('../db/helpers');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
-const { sendError } = require('../utils/respond');
+const { sendError, asyncHandler } = require('../utils/respond');
 
 // POST /api/blocks/:id
-router.post('/blocks/:id', protect, async (req, res) => {
-  try {
-    const blockedId = req.params.id;
-    if (blockedId === req.user.id) {
-      return res.status(400).json({ message: 'Cannot block yourself' });
-    }
+router.post('/blocks/:id', protect, asyncHandler(async (req, res) => {
+  const blockedId = req.params.id;
+  if (blockedId === req.user.id) {
+    return res.status(400).json({ message: 'Cannot block yourself' });
+  }
 
-    const db = getSupabase();
-    const { data: target } = await db.from('users').select('id').eq('id', blockedId).maybeSingle();
-    if (!target) return res.status(404).json({ message: 'User not found' });
+  const db = getSupabase();
+  const { data: target } = await db.from('users').select('id').eq('id', blockedId).maybeSingle();
+  if (!target) return res.status(404).json({ message: 'User not found' });
 
-    const { error } = await db.from('blocks').upsert({
-      blocker_id: req.user.id,
-      blocked_id: blockedId
-    }, { onConflict: 'blocker_id,blocked_id' });
+  const { error } = await db.from('blocks').upsert({
+    blocker_id: req.user.id,
+    blocked_id: blockedId
+  }, { onConflict: 'blocker_id,blocked_id' });
 
-    if (error) throw error;
+  if (error) throw error;
 
-    // Also remove follow relationships either way
-    await db.from('follows').delete().eq('follower_id', req.user.id).eq('following_id', blockedId);
-    await db.from('follows').delete().eq('follower_id', blockedId).eq('following_id', req.user.id);
+  // Also remove follow relationships either way
+  await db.from('follows').delete().eq('follower_id', req.user.id).eq('following_id', blockedId);
+  await db.from('follows').delete().eq('follower_id', blockedId).eq('following_id', req.user.id);
 
-    res.json({ message: 'User blocked', blocked: true });
-  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
-});
+  res.json({ message: 'User blocked', blocked: true });
+}, "Could not complete that request"));
 
 // DELETE /api/blocks/:id
-router.delete('/blocks/:id', protect, async (req, res) => {
-  try {
-    await getSupabase()
-      .from('blocks')
-      .delete()
-      .eq('blocker_id', req.user.id)
-      .eq('blocked_id', req.params.id);
-    res.json({ message: 'User unblocked', blocked: false });
-  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
-});
+router.delete('/blocks/:id', protect, asyncHandler(async (req, res) => {
+  await getSupabase()
+    .from('blocks')
+    .delete()
+    .eq('blocker_id', req.user.id)
+    .eq('blocked_id', req.params.id);
+  res.json({ message: 'User unblocked', blocked: false });
+}, "Could not complete that request"));
 
 // GET /api/blocks
-router.get('/blocks', protect, async (req, res) => {
-  try {
-    const db = getSupabase();
-    const { data: rows, error } = await db
-      .from('blocks')
-      .select('blocked_id')
-      .eq('blocker_id', req.user.id);
+router.get('/blocks', protect, asyncHandler(async (req, res) => {
+  const db = getSupabase();
+  const { data: rows, error } = await db
+    .from('blocks')
+    .select('blocked_id')
+    .eq('blocker_id', req.user.id);
 
-    if (error) throw error;
-    const ids = (rows || []).map(r => r.blocked_id);
-    if (!ids.length) return res.json({ blocks: [] });
+  if (error) throw error;
+  const ids = (rows || []).map(r => r.blocked_id);
+  if (!ids.length) return res.json({ blocks: [] });
 
-    const { data: users } = await db.from('users').select('*').in('id', ids);
-    res.json({ blocks: (users || []).map(u => shapeUser(u)) });
-  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
-});
+  const { data: users } = await db.from('users').select('*').in('id', ids);
+  res.json({ blocks: (users || []).map(u => shapeUser(u)) });
+}, "Could not complete that request"));
 
 // POST /api/reports
-router.post('/reports', protect, writeLimiter, async (req, res) => {
-  try {
-    const { targetType, targetId, reason, details } = req.body;
-    if (!targetType || !targetId || !reason) {
-      return res.status(400).json({ message: 'targetType, targetId, and reason required' });
-    }
-    const allowed = ['user', 'post', 'question', 'answer'];
-    if (!allowed.includes(targetType)) {
-      return res.status(400).json({ message: 'Invalid targetType' });
-    }
+router.post('/reports', protect, writeLimiter, asyncHandler(async (req, res) => {
+  const { targetType, targetId, reason, details } = req.body;
+  if (!targetType || !targetId || !reason) {
+    return res.status(400).json({ message: 'targetType, targetId, and reason required' });
+  }
+  const allowed = ['user', 'post', 'question', 'answer'];
+  if (!allowed.includes(targetType)) {
+    return res.status(400).json({ message: 'Invalid targetType' });
+  }
 
-    const { error } = await getSupabase().from('reports').insert({
-      reporter_id: req.user.id,
-      target_type: targetType,
-      target_id: String(targetId),
-      reason: sanitizeText(reason, 200),
-      details: sanitizeText(details, 2000),
-      status: 'open'
-    });
+  const { error } = await getSupabase().from('reports').insert({
+    reporter_id: req.user.id,
+    target_type: targetType,
+    target_id: String(targetId),
+    reason: sanitizeText(reason, 200),
+    details: sanitizeText(details, 2000),
+    status: 'open'
+  });
 
-    if (error) throw error;
-    res.status(201).json({ message: 'Report submitted. Our team will review it.' });
-  } catch (err) { sendError(res, err, req, "Could not complete that request"); }
-});
+  if (error) throw error;
+  res.status(201).json({ message: 'Report submitted. Our team will review it.' });
+}, "Could not complete that request"));
 
 module.exports = router;
