@@ -18,6 +18,7 @@ import {
 import { useOptimisticList } from '../hooks/useOptimistic';
 import useInfiniteScroll from '../hooks/useInfiniteScroll';
 import usePullToRefresh from '../hooks/usePullToRefresh';
+import { playLike } from '../utils/sound';
 import useReducedMotion from '../hooks/useReducedMotion';
 
 const MAX_MEDIA = 5;
@@ -38,6 +39,7 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onS
   const [comment, setComment] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [bump, setBump] = useState(0);
   const reduced = useReducedMotion();
 
   const uid = currentUser?._id || currentUser?.id;
@@ -61,10 +63,22 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onS
     }
   };
 
+  /*
+   * The like tap fires three things before the network call: a vibration, a
+   * sound, and a bump counter that drives the button's hop.
+   *
+   * `isLiked` is read here rather than inside the handler chain because the
+   * optimistic update in Feed flips it immediately — by the time onLike
+   * resolves, the value has already changed, and the sound would be the wrong
+   * one. Bumping a counter rather than toggling a boolean means a rapid
+   * double-tap replays the animation instead of cancelling it.
+   */
   const like = useCallback(() => {
     haptic();
+    playLike(!isLiked);
+    setBump((n) => n + 1);
     onLike(pid);
-  }, [onLike, pid]);
+  }, [onLike, pid, isLiked]);
 
   return (
     <motion.article
@@ -155,23 +169,34 @@ function PostCard({ post, currentUser, onLike, onComment, onShare, onDelete, onS
       )}
 
       <div className="post-actions" style={{ borderTop: '1px solid var(--border-soft)' }}>
-        <button
+        <motion.button
           type="button"
-          className={`action-btn ${isLiked ? 'liked' : ''}`}
+          className={`action-btn action-btn-like ${isLiked ? 'liked' : ''}`}
           onClick={like}
           aria-pressed={isLiked}
+          // Pressing anywhere on the button dips the whole thing, so the tap
+          // registers visually even on the padding rather than only on the icon.
+          whileTap={reduced ? undefined : { scale: 0.94 }}
+          animate={
+            reduced || bump === 0
+              ? { y: 0 }
+              : // Keyed on the counter so a rapid double-tap replays the hop
+                // instead of the second tap cancelling the first.
+                { y: [0, -9, 0, -3, 0] }
+          }
+          transition={reduced ? { duration: 0 } : { duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
+          key={`like-${bump}`}
         >
           <motion.span
             className="action-icon"
-            key={isLiked ? 'on' : 'off'}
-            initial={reduced ? false : { scale: 0.7 }}
-            animate={{ scale: isLiked ? 1.12 : 1 }}
+            initial={false}
+            animate={{ scale: isLiked ? 1.12 : 1, rotate: isLiked ? [0, -14, 10, 0] : 0 }}
             transition={reduced ? { duration: 0 } : { type: 'spring', stiffness: 600, damping: 16 }}
           >
             <Heart size={18} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={isLiked ? 0 : 2} />
           </motion.span>
           Like
-        </button>
+        </motion.button>
 
         <button type="button" className="action-btn" onClick={() => setShowComments((v) => !v)}>
           <span className="action-icon"><MessageCircle size={18} /></span>

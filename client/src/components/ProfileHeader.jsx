@@ -31,6 +31,25 @@ export default function ProfileHeader({
       >
         <div className="profile-cover-scrim" aria-hidden="true" />
 
+        {/*
+          The whole banner is the target, not just the button in its corner.
+          Aiming for a small labelled button is fiddly on a phone, and people
+          reasonably expect to tap the picture they want to replace. The button
+          stays as the visible affordance — nothing signals "this is clickable"
+          on a plain image otherwise — but it sits above this layer, so tapping
+          either works and Remove still does its own thing.
+        */}
+        {editable && (
+          <button
+            type="button"
+            className="profile-cover-hit"
+            onClick={onPickCover}
+            disabled={busy === 'cover'}
+            aria-label={cover ? 'Change cover image' : 'Add cover image'}
+            title={cover ? 'Change cover image' : 'Add cover image'}
+          />
+        )}
+
         {editable && (
           <div className="profile-cover-actions">
             <button
@@ -59,23 +78,43 @@ export default function ProfileHeader({
 
       <div className="profile-identity">
         <div className="profile-avatar-slot">
-          <Avatar
-            src={user?.avatarUrl || user?.avatar}
-            name={user?.name}
-            userId={userId}
-            size={132}
-            ring
-          />
-          {editable && (
+          {editable ? (
+            /*
+              The picture itself is the button. The camera badge used to be the
+              only way in — a 36px target in the corner of a 132px photo, which
+              is both hard to hit and not where anyone aims. The badge is now
+              decoration inside the button rather than a separate control.
+            */
             <button
               type="button"
-              className="profile-avatar-edit"
+              className="profile-avatar-hit"
               onClick={onPickAvatar}
               disabled={busy === 'avatar'}
               aria-label="Change profile picture"
+              title="Change profile picture"
             >
-              <Camera size={16} />
+              <Avatar
+                src={user?.avatarUrl || user?.avatar}
+                name={user?.name}
+                userId={userId}
+                size={132}
+                ring
+              />
+              <span className="profile-avatar-veil" aria-hidden="true">
+                <Camera size={28} />
+              </span>
+              <span className="profile-avatar-edit" aria-hidden="true">
+                <Camera size={16} />
+              </span>
             </button>
+          ) : (
+            <Avatar
+              src={user?.avatarUrl || user?.avatar}
+              name={user?.name}
+              userId={userId}
+              size={132}
+              ring
+            />
           )}
         </div>
 

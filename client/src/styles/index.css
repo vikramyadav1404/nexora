@@ -1061,7 +1061,11 @@ a, button, [role="button"], input, select, textarea, .action-btn, .tab-item,
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 8px 4px;
+  /* 8px was under the 44px minimum once the 18px icon is accounted for, so the
+     row of actions was a set of thin strips. The whole width of each action is
+     already clickable — this makes the height match. */
+  padding: 12px 4px;
+  min-height: 44px;
   border-radius: 6px;
   background: transparent;
   border: none;
@@ -1071,6 +1075,24 @@ a, button, [role="button"], input, select, textarea, .action-btn, .tab-item,
   font-weight: 600;
   transition: background 0.1s;
   font-family: var(--font-body);
+  /* The hop in Feed.jsx translates the button; without this the transform is
+     composited against neighbours and can clip at the card's edge. */
+  will-change: transform;
+}
+
+/* Like is the one people reach for most, and the one that has to survive a
+   half-accurate thumb. It gets a slightly wider bite of the row than the
+   others without changing the visual layout. */
+.action-btn-like {
+  position: relative;
+  touch-action: manipulation;
+}
+.action-btn-like::before {
+  content: '';
+  position: absolute;
+  /* Extends the hit area past the visible button, into the padding around it.
+     Nothing sits there to steal the tap. */
+  inset: -6px -2px;
 }
 .action-btn:hover { background: var(--bg-hover); color: var(--text-base); }
 .action-btn.liked { color: var(--nx-violet); }
@@ -1832,6 +1854,50 @@ a, button, [role="button"], input, select, textarea, .action-btn, .tab-item,
   flex-wrap: wrap;
 }
 
+/* The whole photo is the upload target. Aiming for the 36px badge in the corner
+   of a 132px picture is fiddly on a phone, and people tap the picture anyway. */
+.profile-avatar-hit {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  /* Keeps the focus ring circular instead of boxing the whole slot. */
+  -webkit-tap-highlight-color: transparent;
+}
+.profile-avatar-hit:disabled { cursor: default; }
+.profile-avatar-hit:focus-visible {
+  outline: 2px solid var(--nx-violet);
+  outline-offset: 4px;
+}
+
+/* A plain photo gives no hint that it can be replaced, so hovering dims it and
+   shows a camera. Hover only — on touch the badge carries the affordance and a
+   permanent veil would just obscure the picture. */
+.profile-avatar-veil {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0;
+  transition: opacity var(--t-fast);
+  pointer-events: none;
+}
+.profile-avatar-hit:hover:not(:disabled) .profile-avatar-veil,
+.profile-avatar-hit:focus-visible .profile-avatar-veil { opacity: 1; }
+.profile-avatar-hit:disabled .profile-avatar-veil { opacity: 1; }
+
+@media (hover: none) {
+  /* No hover on touch, so never leave the veil stuck over the photo. */
+  .profile-avatar-hit:hover:not(:disabled) .profile-avatar-veil { opacity: 0; }
+}
+
+/* Now a badge inside the button rather than a control of its own. */
 .profile-avatar-edit {
   position: absolute;
   right: 4px;
@@ -1844,11 +1910,29 @@ a, button, [role="button"], input, select, textarea, .action-btn, .tab-item,
   color: #fff;
   display: grid;
   place-items: center;
-  cursor: pointer;
   transition: transform var(--t-fast);
+  pointer-events: none;
 }
-.profile-avatar-edit:hover:not(:disabled) { transform: scale(1.08); }
-.profile-avatar-edit:disabled { opacity: 0.6; cursor: default; }
+.profile-avatar-hit:hover:not(:disabled) .profile-avatar-edit { transform: scale(1.08); }
+.profile-avatar-hit:disabled .profile-avatar-edit { opacity: 0.6; }
+
+/* Covers the banner so tapping anywhere on it opens the picker. Sits below
+   .profile-cover-actions (z-index 2) so Change and Remove keep working. */
+.profile-cover-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.profile-cover-hit:disabled { cursor: default; }
+.profile-cover-hit:hover:not(:disabled) { background: rgba(0, 0, 0, 0.12); }
+.profile-cover-hit:focus-visible {
+  outline: 2px solid var(--nx-violet);
+  outline-offset: -4px;
+}
 
 @media (max-width: 640px) {
   .profile-identity { justify-content: center; text-align: center; }
