@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const QRCode = require('qrcode');
 const { getSupabase } = require('../db/supabase');
 const {
   hashPassword, comparePassword, shapeUser, isToday, computeBadges,
@@ -23,8 +24,23 @@ const {
   revokeRefreshToken,
   revokeFamily,
   setRefreshCookie,
-  clearRefreshCookie
+  clearRefreshCookie,
+  signMfaPendingToken,
+  verifyMfaPendingToken
 } = require('../utils/tokens');
+
+const {
+  MFA_LOCKOUT_MINUTES,
+  lockoutRemainingMs,
+  recordFailedAttempt,
+  clearFailedAttempts,
+  beginEnrolment,
+  verifyTotpForUser,
+  consumeBackupCode,
+  countUnusedBackupCodes,
+  regenerateBackupCodes,
+  disableMfa
+} = require('../utils/mfa');
 
 /**
  * Start a session: 15-minute access token in the body, 30-day refresh token in
@@ -218,6 +234,24 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(403).json({ message: 'This account has been deactivated. Contact support.' });
     }
 
+    /*
+     * Second factor: stop here, before any session exists.
+     *
+     * The token returned carries typ 'mfa_pending', which middleware/auth.js
+     * refuses. It is a receipt proving the password was correct and nothing
+     * more — no refresh cookie is set, so an attacker who stops at this point
+     * holds something that expires in five minutes and opens no route.
+     */
+    if (user.mfa_enabled) {
+      return res.json({
+        mfaRequired: true,
+        mfaToken: signMfaPendingToken(user.id),
+        // Named so the client can prompt for the right thing, without saying
+        // anything a caller who reached here doesn't already know.
+        methods: ['totp', 'backup_code']
+      });
+    }
+
     const { accessToken } = await startSession(req, res, user.id);
     res.json({ token: accessToken, user: publicUser(user) });
   } catch (err) { sendError(res, err, req, "Authentication failed"); }
@@ -287,6 +321,273 @@ router.post('/logout', async (req, res) => {
     clearRefreshCookie(res);
     res.json({ message: 'Logged out' });
   } catch (err) { sendError(res, err, req, 'Could not log out'); }
+});
+
+/* ============================================================
+ * Two-factor authentication
+ * ============================================================
+ *
+ * Enrolment is deliberately two steps. /mfa/setup mints a secret and stores it
+ * with mfa_enabled still false; only /mfa/enable, after a code proves the
+ * authenticator app actually holds that secret, flips the flag. Enabling on
+ * setup would let anyone who mis-scanned the QR lock themselves out of their own
+ * account with nothing to recover it with.
+ */
+
+/** A missing migration should name itself rather than surface as a 500. */
+function rethrowNamingMigration(err) {
+  const msg = err?.message || '';
+  if (/mfa_|mfa_backup_codes/i.test(msg) && /column|schema cache|relation|does not exist/i.test(msg)) {
+    throw new Error(
+      'Database schema incomplete: the MFA columns are missing. ' +
+      'Run server/db/migrations/010_mfa.sql in the Supabase SQL Editor.'
+    );
+  }
+  throw err;
+}
+
+/** Six digits is a TOTP code; anything else is treated as a backup code. */
+const looksLikeTotp = (code) => /^\d{6}$/.test(String(code || '').replace(/\s/g, ''));
+
+/**
+ * POST /api/auth/mfa/verify
+ *
+ * The second half of login. Takes the mfa_pending token from /login plus a code,
+ * and only here does a session come into existence.
+ *
+ * Not behind `protect` — by definition the caller has no access token yet.
+ * authLimiter applies because this is a login attempt, and the per-account
+ * lockout in utils/mfa.js applies on top of it, since an IP-keyed limiter that
+ * fails open is not enough to guard the last factor.
+ */
+router.post('/mfa/verify', authLimiter, async (req, res) => {
+  try {
+    const { mfaToken, code } = req.body || {};
+
+    const userId = verifyMfaPendingToken(mfaToken);
+    if (!userId) {
+      return res.status(401).json({ message: 'Verification expired. Please sign in again.' });
+    }
+    if (!code) {
+      return res.status(400).json({ message: 'Enter the code from your authenticator app' });
+    }
+
+    const { data: user, error } = await getSupabase()
+      .from('users').select('*').eq('id', userId).maybeSingle();
+    if (error) throw error;
+
+    // A pending token outliving its account, or MFA switched off mid-flow.
+    if (!user || !user.mfa_enabled) {
+      return res.status(401).json({ message: 'Verification expired. Please sign in again.' });
+    }
+    if (user.is_active === false) {
+      return res.status(403).json({ message: 'This account has been deactivated. Contact support.' });
+    }
+
+    const lockedFor = lockoutRemainingMs(user);
+    if (lockedFor > 0) {
+      const minutes = Math.ceil(lockedFor / 60000);
+      return res.status(429).json({
+        message: `Too many incorrect codes. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`,
+        retryAfterSeconds: Math.ceil(lockedFor / 1000)
+      });
+    }
+
+    const usedBackupCode = !looksLikeTotp(code);
+    const ok = usedBackupCode
+      ? await consumeBackupCode(user.id, code)
+      : await verifyTotpForUser(user, code);
+
+    if (!ok) {
+      const { locked } = await recordFailedAttempt(user);
+      // The count is not reported back. Telling an attacker how many tries
+      // remain hands them the shape of the defence for free, and a real user
+      // gets the same outcome either way: fix the code, or wait.
+      return res.status(401).json({
+        message: locked
+          ? `Too many incorrect codes. Try again in ${MFA_LOCKOUT_MINUTES} minutes.`
+          : 'That code is not valid'
+      });
+    }
+
+    await clearFailedAttempts(user.id);
+    const { accessToken } = await startSession(req, res, user.id);
+
+    const remaining = usedBackupCode ? await countUnusedBackupCodes(user.id) : null;
+
+    res.json({
+      token: accessToken,
+      user: publicUser(user),
+      usedBackupCode,
+      // Surfaced only when one was spent, so the client can nudge before the
+      // last one is gone and the account becomes unrecoverable on a lost phone.
+      backupCodesRemaining: remaining
+    });
+  } catch (err) { sendError(res, err, req, 'Verification failed'); }
+});
+
+/** GET /api/auth/mfa/status — what the settings screen renders from. */
+router.get('/mfa/status', protect, async (req, res) => {
+  try {
+    const row = req.userRow;
+    res.json({
+      enabled: !!row.mfa_enabled,
+      enabledAt: row.mfa_enabled_at || null,
+      backupCodesRemaining: row.mfa_enabled ? await countUnusedBackupCodes(row.id) : 0
+    });
+  } catch (err) { sendError(res, err, req, 'Could not load two-factor status'); }
+});
+
+/**
+ * POST /api/auth/mfa/setup
+ *
+ * Mints a secret and returns it as a QR code plus the raw string, for anyone
+ * enrolling on the same device they are reading the screen on, or using an app
+ * that cannot scan.
+ *
+ * Re-runnable: calling it again discards the previous unconfirmed secret. That
+ * is what makes an abandoned setup recoverable rather than a permanent snag.
+ */
+router.post('/mfa/setup', protect, sensitiveLimiter, async (req, res) => {
+  try {
+    const row = req.userRow;
+    if (row.mfa_enabled) {
+      return res.status(409).json({
+        message: 'Two-factor is already on. Turn it off before setting it up again.'
+      });
+    }
+
+    const { secret, uri } = await beginEnrolment(row.id, row.email).catch(rethrowNamingMigration);
+    const qr = await QRCode.toDataURL(uri, { margin: 1, width: 240, errorCorrectionLevel: 'M' });
+
+    res.json({ secret, uri, qr, digits: 6, period: 30 });
+  } catch (err) { sendError(res, err, req, 'Could not start two-factor setup'); }
+});
+
+/**
+ * POST /api/auth/mfa/enable
+ *
+ * Confirms the app holds the secret, then turns MFA on and hands back the backup
+ * codes. This is the only time those codes exist in readable form.
+ */
+router.post('/mfa/enable', protect, sensitiveLimiter, async (req, res) => {
+  try {
+    const row = req.userRow;
+    const { code } = req.body || {};
+
+    if (row.mfa_enabled) {
+      return res.status(409).json({ message: 'Two-factor is already on' });
+    }
+    if (!row.mfa_secret) {
+      return res.status(400).json({ message: 'Start setup first' });
+    }
+    if (!looksLikeTotp(code)) {
+      return res.status(400).json({ message: 'Enter the 6-digit code from your app' });
+    }
+
+    if (!(await verifyTotpForUser(row, code))) {
+      return res.status(401).json({
+        message: 'That code is not valid. Check your phone\'s clock is set automatically.'
+      });
+    }
+
+    const { error } = await getSupabase()
+      .from('users')
+      .update({ mfa_enabled: true, mfa_enabled_at: new Date().toISOString() })
+      .eq('id', row.id);
+    if (error) rethrowNamingMigration(error);
+
+    const backupCodes = await regenerateBackupCodes(row.id);
+
+    /*
+     * Every other session ends here, and the caller gets a fresh one.
+     *
+     * People turn this on because they suspect their password is known. A
+     * session opened with that password before MFA existed would otherwise keep
+     * refreshing for thirty days, completely untouched by the factor just added.
+     */
+    await revokeFamily(row.id);
+    const { accessToken } = await startSession(req, res, row.id);
+
+    res.json({
+      message: 'Two-factor authentication is on',
+      token: accessToken,
+      backupCodes
+    });
+  } catch (err) { sendError(res, err, req, 'Could not enable two-factor'); }
+});
+
+/**
+ * POST /api/auth/mfa/disable
+ *
+ * Requires the password *and* a current code. Requiring only the session would
+ * mean a stolen access token could strip the protection off in one call, which
+ * would make MFA decorative — the attacker turns it off and logs in freely
+ * afterwards.
+ */
+router.post('/mfa/disable', protect, sensitiveLimiter, async (req, res) => {
+  try {
+    const row = req.userRow;
+    const { password, code } = req.body || {};
+
+    if (!row.mfa_enabled) {
+      return res.status(409).json({ message: 'Two-factor is not on' });
+    }
+    if (!(await comparePassword(password, row.password))) {
+      return res.status(401).json({ message: 'Password is incorrect' });
+    }
+
+    const lockedFor = lockoutRemainingMs(row);
+    if (lockedFor > 0) {
+      return res.status(429).json({
+        message: `Too many incorrect codes. Try again in ${Math.ceil(lockedFor / 60000)} minutes.`
+      });
+    }
+
+    // A backup code is accepted, because "lost my phone" is exactly when someone
+    // needs to turn this off, and they have already proved the password.
+    const ok = looksLikeTotp(code)
+      ? await verifyTotpForUser(row, code)
+      : await consumeBackupCode(row.id, code);
+
+    if (!ok) {
+      await recordFailedAttempt(row);
+      return res.status(401).json({ message: 'That code is not valid' });
+    }
+
+    await disableMfa(row.id).catch(rethrowNamingMigration);
+    await clearFailedAttempts(row.id);
+
+    res.json({ message: 'Two-factor authentication is off' });
+  } catch (err) { sendError(res, err, req, 'Could not disable two-factor'); }
+});
+
+/**
+ * POST /api/auth/mfa/backup-codes
+ *
+ * Issues a fresh set and invalidates the old one. Password required: the point
+ * of these codes is that they bypass the second factor, so handing a new set to
+ * whoever holds the session would route straight around it.
+ */
+router.post('/mfa/backup-codes', protect, sensitiveLimiter, async (req, res) => {
+  try {
+    const row = req.userRow;
+    const { password } = req.body || {};
+
+    if (!row.mfa_enabled) {
+      return res.status(409).json({ message: 'Turn on two-factor first' });
+    }
+    if (!(await comparePassword(password, row.password))) {
+      return res.status(401).json({ message: 'Password is incorrect' });
+    }
+
+    const backupCodes = await regenerateBackupCodes(row.id).catch(rethrowNamingMigration);
+
+    res.json({
+      message: 'New backup codes generated. The old ones no longer work.',
+      backupCodes
+    });
+  } catch (err) { sendError(res, err, req, 'Could not generate backup codes'); }
 });
 
 // GET /api/auth/me

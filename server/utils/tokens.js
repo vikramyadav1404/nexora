@@ -21,6 +21,15 @@ const REFRESH_COOKIE = 'nexora_refresh';
 
 /** Access tokens carry a type so a pending-MFA token can never be mistaken for one. */
 const TOKEN_TYPE_ACCESS = 'access';
+const TOKEN_TYPE_MFA_PENDING = 'mfa_pending';
+
+/**
+ * How long the gap between password and second factor may stay open.
+ *
+ * Long enough to unlock a phone and find the app, short enough that a pending
+ * token copied off a screen is worthless by the time anyone acts on it.
+ */
+const MFA_PENDING_TTL = '5m';
 
 function jwtSecret() {
   return process.env.JWT_SECRET || 'dev_insecure_jwt';
@@ -28,6 +37,35 @@ function jwtSecret() {
 
 function signAccessToken(userId) {
   return jwt.sign({ id: userId, typ: TOKEN_TYPE_ACCESS }, jwtSecret(), { expiresIn: ACCESS_TTL });
+}
+
+/**
+ * The half-authenticated token issued between a correct password and a correct
+ * code. It carries no session — middleware/auth.js rejects any typ that is not
+ * 'access', so the only route that will look at this is /api/auth/mfa/verify.
+ */
+function signMfaPendingToken(userId) {
+  return jwt.sign({ id: userId, typ: TOKEN_TYPE_MFA_PENDING }, jwtSecret(), {
+    expiresIn: MFA_PENDING_TTL
+  });
+}
+
+/**
+ * Returns the user id, or null.
+ *
+ * The typ check is the point: an access token presented here must not work.
+ * Without it, anyone already holding a valid session could walk another
+ * account's second factor, and a 15-minute access token would become a way to
+ * satisfy the very step it is meant to depend on.
+ */
+function verifyMfaPendingToken(token) {
+  try {
+    const decoded = jwt.verify(token, jwtSecret());
+    if (decoded?.typ !== TOKEN_TYPE_MFA_PENDING || !decoded?.id) return null;
+    return decoded.id;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -224,8 +262,12 @@ module.exports = {
   REFRESH_TTL_DAYS,
   REFRESH_COOKIE,
   TOKEN_TYPE_ACCESS,
+  TOKEN_TYPE_MFA_PENDING,
+  MFA_PENDING_TTL,
   RefreshError,
   signAccessToken,
+  signMfaPendingToken,
+  verifyMfaPendingToken,
   hashToken,
   newRefreshToken,
   refreshCookieOptions,

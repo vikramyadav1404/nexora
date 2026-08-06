@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { Globe, Shield, Key, Smartphone, Mail, Check, AlertTriangle, RefreshCw, Eye, EyeOff, UserCheck, Users, Sparkles } from 'lucide-react';
 import { LANGUAGE_META } from '../i18n/translations';
 import { Avatar } from '../components/ui';
+import TwoFactorPanel from '../components/TwoFactorPanel';
 
 export default function Settings() {
   const { user, refreshUser, updateUser, logout } = useAuth();
@@ -501,6 +502,8 @@ export default function Settings() {
                 </div>
               </div>
             )}
+
+            <TwoFactorPanel />
 
             {user?.role === 'admin' && (
               <button type="button" className="btn btn-primary" style={{ marginBottom: 24 }} onClick={() => navigate('/admin')}>

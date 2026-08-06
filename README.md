@@ -11,7 +11,7 @@
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
 ![Node](https://img.shields.io/badge/Node-20-339933?logo=nodedotjs&logoColor=white)
 ![Postgres](https://img.shields.io/badge/Postgres-Supabase-3ECF8E?logo=supabase&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-33_passing-10B26B)
+![Tests](https://img.shields.io/badge/tests-143_passing-10B26B)
 ![License](https://img.shields.io/badge/license-MIT-6E56F8)
 
 <br />
@@ -108,6 +108,8 @@ The parts that aren't obvious from the file tree.
 
 **Payment verification never trusts the request body.** The plan is derived from the *stored* transaction, and the Razorpay HMAC is verified in constant time. The raw-body middleware is mounted *before* `express.json()` so the signature is computed over the exact bytes Razorpay sent.
 
+**A half-authenticated login opens nothing.** With two-factor on, `/login` returns a token typed `mfa_pending` and sets no refresh cookie — no session exists until a code is verified. The type check lives in the `protect` middleware every route already uses, so a route added tomorrow is covered without anyone maintaining a list. TOTP is ~150 lines of `node:crypto` against the RFC 6238 vectors rather than a dependency, each code is single-use within its own 30-second window, and guessing is bounded by a per-account lockout rather than by the IP rate limiter — which is keyed by address and deliberately fails open.
+
 **snake_case in, camelCase out.** Postgres columns are `snake_case`; the API contract is `camelCase`. The whole translation lives in `server/db/helpers.js`.
 
 **Demo mode is a complete second backend.** `DEMO_MODE=true` replaces the entire `/api` surface with an in-memory store — same paths, same shapes. The client can't tell the difference.
@@ -126,9 +128,9 @@ The parts that aren't obvious from the file tree.
 | **Data** | Supabase Postgres via PostgREST — 20 tables, 10 functions, 21 indexes |
 | **Services** | Razorpay payments · Anthropic Claude · Nodemailer · Supabase Storage & Realtime |
 | **Infra** | Two Vercel projects (static SPA + serverless API) · Vercel Cron · GitHub Actions CI |
-| **Tests** | Vitest + Supertest — 33 tests, no database required |
+| **Tests** | Vitest + Supertest — 143 tests, no database required |
 
-**By the numbers:** `22` pages · `79` REST endpoints across 17 route modules (plus a 50-endpoint in-memory mirror for demo mode) · `20` tables · `9` shared UI primitives · `8` custom hooks · `33` tests
+**By the numbers:** `22` pages · `93` REST endpoints across 18 route modules (plus a 57-endpoint in-memory mirror for demo mode) · `22` tables · `9` shared UI primitives · `8` custom hooks · `143` tests
 
 ---
 
@@ -146,6 +148,8 @@ The parts that aren't obvious from the file tree.
 
 **AI assists** *(optional)* — Claude drafts an answer, rewrites a vague question, suggests tags, triages moderation reports.
 
+**Account security** — 15-minute access tokens with rotating refresh tokens and theft detection, plus optional two-factor authentication (TOTP) with single-use backup codes.
+
 **Safety** — block users, report content, admin moderation queue.
 
 ---
@@ -153,13 +157,15 @@ The parts that aren't obvious from the file tree.
 ## Testing
 
 ```bash
-cd server && npm test     # 33 tests, no DB — injects a fake Supabase client
+cd server && npm test     # 143 tests, no DB — injects a fake Supabase client
 ```
 
 Coverage is deliberately weighted toward what's expensive to get wrong:
 
 - **Payment verification** — including a regression test that replays a real privilege-escalation attack and asserts it now fails
 - **Points transfer under concurrency** — proves points can't be double-spent
+- **Token rotation** — reuse of a rotated refresh token revokes the whole family
+- **Two-factor** — RFC 6238 vectors, replay inside a code's own 30-second window, and the per-account lockout
 - **Feed cursor pagination** — including the 60-post cap that used to truncate the feed
 - **Search input escaping** — against PostgREST filter injection
 - **Image pipeline** — resize caps, WebP conversion, corrupt-file handling
@@ -286,7 +292,7 @@ Live and working. Some features ship dormant and switch on when their key is set
 Known gaps, honestly:
 
 - **Video isn't transcoded.** Images are optimised; videos upload as-is, up to 50 MB.
-- **No frontend tests.** The 33 tests cover the API only.
+- **No frontend tests.** The 143 tests cover the API only.
 - **No direct messages.** The social graph supports friends and follows, but there's no messaging.
 
 ---

@@ -42,9 +42,18 @@ export default function Landing() {
     setError('');
     setLoading(true);
     try {
-      const user = await login(form.email, form.password);
+      const result = await login(form.email, form.password);
+
+      // The code step lives on /login rather than being built twice. Handing the
+      // pending token over in router state keeps it out of the URL and out of
+      // anything persistent.
+      if (result.mfaRequired) {
+        navigate('/login', { state: { mfaToken: result.mfaToken }, replace: true });
+        return;
+      }
+
       toast.success('Logged in');
-      navigate(user?.onboardingCompleted ? '/feed' : '/onboarding');
+      navigate(result.user?.onboardingCompleted ? '/feed' : '/onboarding');
     } catch (err) {
       setError(err.response?.data?.message || 'The email or password you entered is incorrect.');
     } finally {

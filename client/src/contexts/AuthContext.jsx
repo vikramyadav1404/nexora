@@ -49,12 +49,41 @@ export function AuthProvider({ children }) {
     return () => { cancelled = true; };
   }, [applyToken]);
 
+  /**
+   * Returns either `{ user }` or `{ mfaRequired: true, mfaToken }`.
+   *
+   * A discriminated result rather than a bare user, because the second case has
+   * no user to return — the server deliberately withholds one until the code is
+   * verified. Callers must branch; there is no shape that lets an MFA response
+   * be mistaken for a completed login.
+   */
   async function login(email, password) {
     const res = await axios.post('/api/auth/login', { email, password });
+
+    if (res.data?.mfaRequired) {
+      // Nothing is applied to auth state here. The pending token is not a
+      // session and must not be treated as one — it is handed straight back to
+      // the caller and lives only for the length of the code prompt.
+      return { mfaRequired: true, mfaToken: res.data.mfaToken };
+    }
+
     const { token: t, user: u } = res.data;
     applyToken(t);
     setUser(u);
-    return u;
+    return { user: u };
+  }
+
+  /** Second half of an MFA login. Accepts a TOTP code or a backup code. */
+  async function verifyMfa(mfaToken, code) {
+    const res = await axios.post('/api/auth/mfa/verify', { mfaToken, code });
+    const { token: t, user: u } = res.data;
+    applyToken(t);
+    setUser(u);
+    return {
+      user: u,
+      usedBackupCode: res.data.usedBackupCode,
+      backupCodesRemaining: res.data.backupCodesRemaining
+    };
   }
 
   async function register(payload) {
@@ -145,7 +174,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, token, loading, login, register, logout, updateUser, refreshUser }}
+      value={{ user, token, loading, login, verifyMfa, register, logout, updateUser, refreshUser }}
     >
       {children}
     </AuthContext.Provider>
