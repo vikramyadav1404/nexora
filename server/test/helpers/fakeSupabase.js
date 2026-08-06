@@ -67,9 +67,23 @@ class Query {
     this.payload = payload;
     this.filters = [];
     this._limit = null;
+    this._wantCount = false;
+    this._headOnly = false;
   }
 
-  select() { return this; }
+  /**
+   * `select('*', { count: 'exact', head: true })` asks for a count and no rows.
+   *
+   * Returning `this` and nothing else made every such call resolve with
+   * `count: undefined`. Routes read that as zero — POST /api/posts computes the
+   * daily allowance from friend and follow counts, saw a network of 0, and
+   * refused every post with a 403 that looked like a permissions bug.
+   */
+  select(_fields, opts) {
+    if (opts?.count) this._wantCount = true;
+    if (opts?.head) this._headOnly = true;
+    return this;
+  }
   order() { return this; }
   eq(col, val) { this.filters.push(['eq', col, val]); return this; }
   neq(col, val) { this.filters.push(['neq', col, val]); return this; }
@@ -123,7 +137,12 @@ class Query {
   // Awaiting the builder directly resolves the query, same as the real client.
   then(resolve, reject) {
     try {
-      return Promise.resolve({ data: this._run(), error: null }).then(resolve, reject);
+      const rows = this._run();
+      const out = { data: this._headOnly ? null : rows, error: null };
+      // Counts ignore limit, matching PostgREST: `count` is the size of the
+      // filtered set, not of the page returned.
+      if (this._wantCount) out.count = this._found().length;
+      return Promise.resolve(out).then(resolve, reject);
     } catch (err) {
       return Promise.resolve({ data: null, error: err }).then(resolve, reject);
     }
@@ -250,7 +269,10 @@ function createFakeSupabase(seed = {}) {
     from(table) {
       tables[table] ||= [];
       return {
-        select: () => new Query(table, tables[table], 'select'),
+        // Options have to be forwarded: `select('*', { count: 'exact' })` is
+        // how routes ask for a count, and dropping them here made every count
+        // come back undefined.
+        select: (fields, opts) => new Query(table, tables[table], 'select').select(fields, opts),
         insert: (payload) => new Query(table, tables[table], 'insert', payload),
         update: (payload) => new Query(table, tables[table], 'update', payload),
         delete: () => new Query(table, tables[table], 'delete'),

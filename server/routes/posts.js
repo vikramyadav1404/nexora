@@ -13,8 +13,20 @@ const { optimizeImage } = require('../utils/image');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
+const { verifyPostUpload } = require('../utils/postMedia');
+const { MediaError } = require('../utils/profileMedia');
 
-// memory storage works on Vercel; uploadMedia sends buffer to Supabase / local disk
+const MAX_MEDIA_PER_POST = 5;
+
+/*
+ * The multipart fallback, kept for browsers still running an older bundle.
+ *
+ * The 50MB here is not the real ceiling on this path and never was: the request
+ * has to fit inside a serverless function body, which Vercel caps near 4.5MB,
+ * so anything larger is rejected at the edge before multer sees it. Files that
+ * size now arrive as keys via /api/uploads/presign instead, where 50MB is
+ * enforced against the stored object and is achievable.
+ */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024 }
@@ -22,6 +34,8 @@ const upload = multer({
 
 // Warn once, not once per request, if migration 006 hasn't been run.
 let feedRpcWarned = false;
+// Same, for migration 011.
+let storageKeyWarned = false;
 
 /** Opaque cursor so clients don't build their own keyset tuples. */
 function encodeCursor(post) {
@@ -130,10 +144,43 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
 
     const content = sanitizeText(req.body.content, 5000);
     const mediaFiles = [];
+
+    /*
+     * Two ways media can arrive.
+     *
+     * mediaKeys: the browser already PUT the bytes to storage using a ticket
+     * from /api/uploads/presign, and sends only the object keys. This is the
+     * path that works for real files — multipart has to fit inside a serverless
+     * request body, which Vercel caps near 4.5MB, so the 50MB the composer
+     * advertises was never achievable through it.
+     *
+     * req.files: the original multipart path, kept because browsers already
+     * running an older bundle still post this way. Removing it would break them
+     * mid-session for no gain.
+     */
+    const mediaKeys = Array.isArray(req.body?.mediaKeys) ? req.body.mediaKeys : [];
+
+    if (mediaKeys.length > MAX_MEDIA_PER_POST) {
+      return res.status(400).json({ message: `Up to ${MAX_MEDIA_PER_POST} files per post` });
+    }
+
+    for (const key of mediaKeys) {
+      // Throws MediaError with its own status: 403 for someone else's key, 404
+      // when nothing was uploaded, 413 oversized, 400 when the bytes are not
+      // actually the media type the key claims.
+      const verified = await verifyPostUpload({ key: String(key), userId });
+      mediaFiles.push({
+        type: verified.type,
+        url: verified.url,
+        storage_key: verified.key
+      });
+    }
+
     if (req.files?.length) {
       for (const f of req.files) {
         // Resize + WebP before storage. A phone photo is often 4-12MB; feed
         // images never render wider than ~640px, so this is a ~95% saving.
+        // The presign path does this in the browser instead, before the PUT.
         const { file: ready, optimized, before, after, saved } = await optimizeImage(f, { kind: 'post' });
         if (optimized) {
           console.log('[image] ' + Math.round(before/1024) + 'KB -> ' + Math.round(after/1024) + 'KB (' + saved + '% smaller)');
@@ -141,7 +188,11 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
         const up = await uploadMedia(ready, { bucket: 'posts', folder: userId });
         mediaFiles.push({
           type: (ready.mimetype || '').startsWith('image') ? 'image' : 'video',
-          url: up.url
+          url: up.url,
+          // Nothing to record: uploadMedia returns a public URL, and the old
+          // path never kept the object path. Migration 011 documents why these
+          // rows keep an empty key.
+          storage_key: ''
         });
       }
     }
@@ -160,9 +211,35 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
     if (error) throw error;
 
     if (mediaFiles.length) {
-      const { error: mErr } = await db.from('post_media').insert(
-        mediaFiles.map(m => ({ post_id: post.id, type: m.type, url: m.url }))
-      );
+      /*
+       * storage_key is written only when migration 011 has run. Sending the
+       * column to a database without it fails the whole insert with PGRST204,
+       * which would make posting impossible on a partially-migrated deployment
+       * — so it is dropped and the post still goes through, exactly as rows
+       * from the old multipart path already do.
+       */
+      const rows = mediaFiles.map(m => ({
+        post_id: post.id,
+        type: m.type,
+        url: m.url,
+        storage_key: m.storage_key || ''
+      }));
+
+      let { error: mErr } = await db.from('post_media').insert(rows);
+
+      if (mErr && (mErr.code === 'PGRST204' || /storage_key/i.test(mErr.message || ''))) {
+        if (!storageKeyWarned) {
+          storageKeyWarned = true;
+          console.warn(
+            '[posts] post_media.storage_key is missing — uploaded objects cannot be ' +
+            'swept or deleted with their post. Run server/db/migrations/011_post_media_keys.sql.'
+          );
+        }
+        ({ error: mErr } = await db.from('post_media').insert(
+          rows.map(({ storage_key, ...rest }) => rest)
+        ));
+      }
+
       if (mErr) throw mErr;
     }
 
@@ -184,6 +261,15 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
       postLimit: postLimit === Infinity ? '∞' : postLimit
     });
   } catch (err) {
+    /*
+     * MediaError carries its own status and a message written for the person
+     * who picked the file — "too large", "does not belong to you", "not a
+     * supported image or video". Those are actionable, so they are returned as
+     * they are rather than flattened into a generic 500.
+     */
+    if (err instanceof MediaError) {
+      return res.status(err.status).json({ message: err.message });
+    }
     // sendError already surfaces schema/config errors verbatim — they tell the
     // operator exactly what to run — and masks everything else.
     sendError(res, err, req, 'Could not publish that post');

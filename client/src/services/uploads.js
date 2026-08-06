@@ -164,4 +164,76 @@ export async function removeProfileMedia(kind) {
   return data.user;
 }
 
+/* ────────────────────────────────────────────────────────────
+ * Feed attachments
+ * ──────────────────────────────────────────────────────────── */
+
+/** Feed images never render wider than ~640 CSS px; 1600 covers 2x displays. */
+const POST_IMAGE_MAX_EDGE = 1600;
+
+export class PresignUnavailableError extends UploadError {}
+
+/**
+ * Downscale and re-encode an image to WebP before it leaves the device.
+ *
+ * The server used to do this with sharp, after receiving the whole file. Now
+ * the bytes go straight to storage and the server only ever sees 32 of them, so
+ * this is the only place it can happen — and it is a better place: a 12MB phone
+ * photo leaves as roughly 200KB, so the upload itself is 60x smaller.
+ *
+ * Images already under the cap are still re-encoded. A 900px JPEG is usually
+ * larger than the same image as WebP, and the consistency is worth more than
+ * the occasional file that grows.
+ */
+async function downscaleImage(file) {
+  const img = await loadImage(file);
+  const scale = Math.min(1, POST_IMAGE_MAX_EDGE / Math.max(img.naturalWidth, img.naturalHeight));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.naturalWidth * scale);
+  canvas.height = Math.round(img.naturalHeight * scale);
+
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  return canvasToBlob(canvas);
+}
+
+/**
+ * Upload one feed attachment and return its storage key.
+ *
+ * Videos are sent untouched — transcoding in a browser tab is not something to
+ * attempt, and the server has never done it either.
+ *
+ * Throws PresignUnavailableError when the deployment has no storage configured,
+ * so the caller can fall back to the old multipart post rather than failing.
+ */
+export async function uploadPostMedia(file, { onProgress } = {}) {
+  const isImage = file.type.startsWith('image/');
+  const blob = isImage ? await downscaleImage(file) : file;
+  const mimeType = isImage ? OUTPUT_TYPE : file.type;
+
+  let ticket;
+  try {
+    ({ data: ticket } = await api.post('/api/uploads/presign', {
+      kind: 'post',
+      mimeType,
+      size: blob.size
+    }));
+  } catch (err) {
+    // 503 is the server saying storage is not enabled on this deployment.
+    if (err.response?.status === 503) {
+      throw new PresignUnavailableError('Direct upload unavailable', { stage: 'presign' });
+    }
+    throw new UploadError(
+      err.response?.data?.message || 'Could not start that upload',
+      { stage: 'presign' }
+    );
+  }
+
+  await putToStorage(ticket.signedUrl, blob, ticket.contentType, onProgress);
+  return ticket.key;
+}
+
 export { TARGET as UPLOAD_TARGETS };

@@ -41,6 +41,38 @@ function sniffImageType(buffer) {
 }
 
 /**
+ * Identify a video container from its leading bytes.
+ *
+ * Feed attachments now go browser-to-storage, so this is the only point where
+ * the server ever sees a video's bytes. Without it, "video/mp4" would be a
+ * claim nobody checks, and the object is served back from a public origin.
+ *
+ * Container detection only — nothing here validates the streams inside, which
+ * would need a demuxer. It is enough to reject a file that is not a video at
+ * all, which is the case that matters.
+ */
+function sniffVideoType(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
+
+  // MP4 / MOV: a box whose type is "ftyp" at offset 4. The brand that follows
+  // distinguishes them, and both are served identically, so it is not read.
+  if (buffer.toString('ascii', 4, 8) === 'ftyp') {
+    const brand = buffer.toString('ascii', 8, 12);
+    return brand.startsWith('qt') ? 'video/quicktime' : 'video/mp4';
+  }
+
+  // WebM / Matroska: EBML header 1A 45 DF A3
+  if (
+    buffer[0] === 0x1a && buffer[1] === 0x45 &&
+    buffer[2] === 0xdf && buffer[3] === 0xa3
+  ) {
+    return 'video/webm';
+  }
+
+  return null;
+}
+
+/**
  * Does the object's real content match what was declared?
  *
  * JPEG is the one place we accept a mismatch in naming only: image/jpg is not a
@@ -55,4 +87,4 @@ function matchesDeclared(buffer, declaredMime) {
   return { ok: actual === normalized, actual };
 }
 
-module.exports = { SNIFF_LENGTH, sniffImageType, matchesDeclared };
+module.exports = { SNIFF_LENGTH, sniffImageType, sniffVideoType, matchesDeclared };

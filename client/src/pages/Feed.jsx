@@ -19,6 +19,7 @@ import { useOptimisticList } from '../hooks/useOptimistic';
 import useInfiniteScroll from '../hooks/useInfiniteScroll';
 import usePullToRefresh from '../hooks/usePullToRefresh';
 import { playLike } from '../utils/sound';
+import { uploadPostMedia, PresignUnavailableError } from '../services/uploads';
 import useReducedMotion from '../hooks/useReducedMotion';
 
 const MAX_MEDIA = 5;
@@ -558,14 +559,37 @@ export default function Feed() {
     setPosting(true);
     setUploadPct(0);
     try {
-      const formData = new FormData();
-      if (content) formData.append('content', content);
-      media.forEach((f) => formData.append('media', f));
+      let res;
 
-      const res = await axios.post('/api/posts', formData, {
-        onUploadProgress: (e) => {
-          if (e.total) setUploadPct(Math.round((e.loaded / e.total) * 100));
-        }
+      /*
+       * Upload each file straight to storage first, then post only the keys.
+       *
+       * Multipart went through the API, and a serverless request body is capped
+       * near 4.5MB — so the 50MB this composer advertises used to fail on any
+       * real photo, with nothing useful to show for it. Images are also
+       * downscaled in the browser on the way, so a 12MB photo uploads as ~200KB.
+       *
+       * Progress is averaged across the files rather than shown per file: the
+       * bar is one bar, and a per-file reset reads as the upload restarting.
+       */
+      let keys = [];
+      if (media.length) {
+        const pct = new Array(media.length).fill(0);
+        const report = () =>
+          setUploadPct(Math.round(pct.reduce((a, b) => a + b, 0) / media.length));
+
+        keys = await Promise.all(
+          media.map((file, i) =>
+            uploadPostMedia(file, {
+              onProgress: (p) => { pct[i] = p; report(); }
+            })
+          )
+        );
+      }
+
+      res = await axios.post('/api/posts', {
+        content: content || undefined,
+        mediaKeys: keys
       });
 
       setPosts((prev) => [res.data.post, ...prev]);
@@ -577,7 +601,39 @@ export default function Feed() {
       toast.success('Post published');
       refreshUser();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to post');
+      /*
+       * A deployment with no storage configured answers presign with 503. That
+       * is not a failure the user can act on, so fall back to the old multipart
+       * post — it still works for anything small enough to fit through the
+       * function, which is what such a deployment was limited to anyway.
+       */
+      if (err instanceof PresignUnavailableError) {
+        try {
+          const formData = new FormData();
+          if (content) formData.append('content', content);
+          media.forEach((f) => formData.append('media', f));
+
+          const res = await axios.post('/api/posts', formData, {
+            onUploadProgress: (e) => {
+              if (e.total) setUploadPct(Math.round((e.loaded / e.total) * 100));
+            }
+          });
+
+          setPosts((prev) => [res.data.post, ...prev]);
+          setContent('');
+          setMedia([]);
+          setPostsToday(res.data.postsToday);
+          setComposerOpen(false);
+          haptic(12);
+          toast.success('Post published');
+          refreshUser();
+          return;
+        } catch (fallbackErr) {
+          toast.error(fallbackErr.response?.data?.message || 'Failed to post');
+          return;
+        }
+      }
+      toast.error(err.response?.data?.message || err.message || 'Failed to post');
     } finally {
       setPosting(false);
       setUploadPct(0);

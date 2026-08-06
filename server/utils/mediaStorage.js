@@ -27,6 +27,23 @@ const KIND_CONFIG = {
     maxBytes: 8 * 1024 * 1024,
     width: 1500,
     height: 500
+  },
+  /*
+   * Feed attachments.
+   *
+   * 50MB matches what the composer has always advertised. It was never
+   * achievable before: multipart posts went through the Vercel function, which
+   * rejects a request body over roughly 4.5MB at the edge, so an ordinary phone
+   * photo failed with nothing useful to show the user. Going direct to storage
+   * is what makes the number real.
+   *
+   * No dimension here. Images are downscaled in the browser before the PUT, so
+   * there is no derivative to build server-side, and videos are stored as-is
+   * exactly as utils/image.js already passed them through.
+   */
+  post: {
+    bucket: 'posts',
+    maxBytes: 50 * 1024 * 1024
   }
 };
 
@@ -38,6 +55,25 @@ const ALLOWED_MIME = {
 // SVG is absent on purpose: it can carry <script>, and we serve these from a
 // public bucket origin.
 
+/**
+ * Post attachments additionally allow video, which profile media never does.
+ *
+ * Kept as a separate map rather than widening ALLOWED_MIME: that one guards
+ * avatars and covers, and quietly letting a video be set as somebody's avatar
+ * would be a behaviour change nobody asked for.
+ */
+const POST_ALLOWED_MIME = {
+  ...ALLOWED_MIME,
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov'
+};
+
+/** The allowlist that applies to a given kind. */
+function mimeMapFor(kind) {
+  return kind === 'post' ? POST_ALLOWED_MIME : ALLOWED_MIME;
+}
+
 const SIGNED_URL_TTL_SECONDS = 5 * 60;
 
 function configFor(kind) {
@@ -46,8 +82,8 @@ function configFor(kind) {
   return config;
 }
 
-function isAllowedMime(mimeType) {
-  return Object.prototype.hasOwnProperty.call(ALLOWED_MIME, mimeType);
+function isAllowedMime(mimeType, kind = 'avatar') {
+  return Object.prototype.hasOwnProperty.call(mimeMapFor(kind), mimeType);
 }
 
 /**
@@ -59,7 +95,7 @@ function isAllowedMime(mimeType) {
  * authenticated user, which is what stops one account claiming another's upload.
  */
 function buildKey({ userId, kind, mimeType }) {
-  const ext = ALLOWED_MIME[mimeType];
+  const ext = mimeMapFor(kind)[mimeType];
   if (!ext) throw new Error(`Unsupported mime type: ${mimeType}`);
   return `users/${userId}/${kind}/${crypto.randomUUID()}.${ext}`;
 }
@@ -173,6 +209,8 @@ function getPublicUrl(bucket, key) {
 module.exports = {
   KIND_CONFIG,
   ALLOWED_MIME,
+  POST_ALLOWED_MIME,
+  mimeMapFor,
   SIGNED_URL_TTL_SECONDS,
   configFor,
   isAllowedMime,

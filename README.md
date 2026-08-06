@@ -1,68 +1,6 @@
-<div align="center">
-
 # Nexora
 
-### A social feed + Q&A platform where your reach is earned, not given.
-
-[![Live Demo](https://img.shields.io/badge/Live_Demo-Open_App-6E56F8?style=for-the-badge)](https://client-olive-ten-89.vercel.app)
-[![API](https://img.shields.io/badge/API-Health_Check-10B26B?style=for-the-badge)](https://nexora-api-beta.vercel.app/api/health)
-
-![CI](https://github.com/vikramyadav1404/nexora/actions/workflows/ci.yml/badge.svg)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
-![Node](https://img.shields.io/badge/Node-20-339933?logo=nodedotjs&logoColor=white)
-![Postgres](https://img.shields.io/badge/Postgres-Supabase-3ECF8E?logo=supabase&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-143_passing-10B26B)
-![License](https://img.shields.io/badge/license-MIT-6E56F8)
-
-<br />
-
-![Nexora feed](docs/images/hero.png)
-
-</div>
-
----
-
-> ### One rule makes Nexora different
->
-> **You can't post until you have a network.** Zero connections → zero posts per day. One connection unlocks 1/day. Two to nine unlocks 2/day. Ten or more is unlimited.
->
-> Every other feed hands you a megaphone on day one and wonders why it fills with noise. Nexora makes you earn the room first.
-
----
-
-## What it looks like
-
-<table>
-<tr>
-<td width="50%"><img src="docs/images/question.png" alt="Question detail with accepted answer" /><br /><em>Q&A — upvotes, accepted answers, points for helping</em></td>
-<td width="50%"><img src="docs/images/leaderboard.png" alt="Leaderboard" /><br /><em>Leaderboard — points, badges, transfers</em></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/images/spaces.png" alt="Spaces grid" /><br /><em>Spaces — 16 interest communities, light theme</em></td>
-<td width="50%"><img src="docs/images/challenges.png" alt="Weekly challenges" /><br /><em>Challenges — weekly goals and activity streaks</em></td>
-</tr>
-</table>
-
-<div align="center">
-<img src="docs/images/mobile.png" alt="Mobile feed" width="300" />
-<br /><em>Responsive down to 390px, installable as a PWA</em>
-</div>
-
----
-
-## Run it in 30 seconds — no database needed
-
-```bash
-git clone https://github.com/vikramyadav1404/nexora.git
-cd nexora && npm run install-all
-
-cd server && DEMO_MODE=true npm start    # terminal 1
-cd client && npm run dev                 # terminal 2
-```
-
-Open **http://localhost:5173** and log in with **`demo@nexora.com`** / **`demo1234`**.
-
-Demo mode swaps the entire API for an in-memory store — same routes, same response shapes, seeded with content. Everything works except persistence.
+A social feed and Q&A platform built around one constraint: your daily posting allowance is a function of your network size, not your subscription. An account with no connections can post nothing; ten or more connections unlocks unlimited. The intent is to make consumption and participation precede broadcast, which is the inverse of how most feeds onboard. Everything else — Spaces, points, badges, subscriptions — exists to give that constraint something to sit on.
 
 ---
 
@@ -70,245 +8,235 @@ Demo mode swaps the entire API for an in-memory store — same routes, same resp
 
 ```mermaid
 flowchart LR
-    B["🌐 Browser<br/>React 19 SPA"]
-    V["▲ Vercel Static<br/>Vite build, SPA rewrite"]
-    A["⚙️ Express API<br/>Vercel serverless"]
-    D[("🐘 Supabase Postgres<br/>20 tables · 10 functions")]
-    S["📦 Supabase Storage<br/>avatars · posts"]
-    R["💳 Razorpay<br/>orders + HMAC webhook"]
-    C["🤖 Claude<br/>writing assists"]
-    K["⏰ Vercel Cron<br/>daily · weekly digest"]
+    B["Browser<br/>React 19 SPA"]
+    S["Vercel Static<br/>Vite build, SPA rewrite"]
+    A["Express API<br/>Vercel serverless, single handler"]
+    PG[("Supabase Postgres<br/>22 tables, 10 plpgsql functions")]
+    ST["Supabase Storage<br/>avatars · covers · posts"]
+    RT["Supabase Realtime<br/>notifications channel"]
+    CR["Vercel Cron<br/>daily · weekly"]
+    RZ["Razorpay"]
+    AN["Anthropic API"]
+    SM["SMTP (nodemailer)"]
 
-    B --> V
-    B -->|"JWT · axios"| A
-    A -->|"PostgREST"| D
-    A --> S
-    A -.optional.-> R
-    A -.optional.-> C
-    K --> A
+    B --> S
+    B -->|"JWT in header,<br/>refresh in httpOnly cookie"| A
+    B -.->|"signed URL PUT,<br/>avatars · covers · post media"| ST
+    B -.->|"anon key + minted JWT"| RT
+    A -->|PostgREST| PG
+    A --> ST
+    A -.optional.-> RZ
+    A -.optional.-> AN
+    A -.optional.-> SM
+    RZ -.->|"HMAC webhook"| A
+    CR --> A
 
     style B fill:#6E56F8,color:#fff,stroke:none
     style A fill:#6E56F8,color:#fff,stroke:none
-    style D fill:#3ECF8E,color:#000,stroke:none
+    style PG fill:#3ECF8E,color:#000,stroke:none
 ```
+
+There is no Redis, no job queue, and no worker process. Scheduled work runs as authenticated HTTP endpoints hit by Vercel Cron (`server/routes/cron.js`); rate limiting is a Postgres table. Both choices are discussed below.
+
+The whole API is one serverless handler — `server/vercel.json` routes `/(.*)` to `index.js`, which mounts every router on first invocation and caches the resulting app.
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| Language | JavaScript. CommonJS on the server, ESM on the client. No TypeScript anywhere |
+| Frontend | React 19, Vite 8, React Router 7, Motion 12, Embla, Lucide, Axios |
+| Styling | Hand-written CSS, custom properties, `data-theme` light/dark. No framework |
+| Backend | Node, Express 4, `helmet`, `compression`, `express-rate-limit` |
+| Data access | `@supabase/supabase-js` against PostgREST. **No ORM** — no Prisma, no Knex, no `pg` |
+| Schema | Raw SQL, 12 numbered migrations in `server/db/migrations/` |
+| Auth | `jsonwebtoken`, `bcryptjs` (cost 12), TOTP implemented against `node:crypto` |
+| Media | `sharp` server-side, `multer` memory storage, Supabase Storage buckets |
+| Optional services | Razorpay, Anthropic SDK, Nodemailer, Sentry (raw HTTP, no SDK) |
+| Tests | Vitest + Supertest, 176 tests across 11 files, no database required |
+
+**Counted from the code:** 93 REST endpoints across 18 route modules, plus a separate 57-endpoint in-memory mirror for demo mode. 22 pages, 19 of them lazy-loaded. 10 shared UI primitives, 8 custom hooks.
 
 ---
 
 ## Engineering decisions
 
-The parts that aren't obvious from the file tree.
+The parts that took thought. Each one has a cost, listed.
 
-**Auth is stateless but never stale.** No session store. Every protected request verifies the JWT *and* re-reads the user row, so a ban or role change takes effect on the very next request — no token revocation machinery needed.
+### Short access tokens with rotating refresh tokens and reuse detection
 
-**No ORM, and that's a deliberate trade.** Routes call PostgREST directly through `getSupabase()`. The API uses the `service_role` key, which bypasses Row Level Security — meaning **Express is the only access-control layer**, and every route does its own authorisation in JavaScript.
+`server/utils/tokens.js`
 
-**The feed uses cursor pagination, not offsets.** `GET /api/posts` returns an opaque `nextCursor` encoding `(created_at, id)`. Offset pagination lets a new post shift rows across page boundaries mid-scroll, producing duplicates and gaps.
+Access tokens live 15 minutes and are held in memory by the client — never `localStorage`. Longevity moves to a 30-day refresh token: 32 bytes of CSPRNG output in an `httpOnly; SameSite=Strict` cookie scoped to `/api/auth`, stored server-side only as a SHA-256 digest.
 
-**Points transfer inside a Postgres function with row locks.** `transfer_points()` takes `FOR UPDATE` locks on both balances, so two concurrent requests can't double-spend the same points. There's a test that proves it.
+Every use rotates it, recording the successor in `replaced_by`. Presenting an already-rotated token means either the legitimate client or a thief is replaying one, and there is no way to tell which from the server — so the entire family is revoked and both parties are logged out.
 
-**Payment verification never trusts the request body.** The plan is derived from the *stored* transaction, and the Razorpay HMAC is verified in constant time. The raw-body middleware is mounted *before* `express.json()` so the signature is computed over the exact bytes Razorpay sent.
+SHA-256 rather than bcrypt for these specifically: the input is 32 bytes of random, so there is no low-entropy guess space for a slow KDF to defend, and bcrypt would add ~250ms to every refresh and silently truncate past 72 bytes. Backup codes, which are short and human-typed, do use bcrypt.
 
-**A half-authenticated login opens nothing.** With two-factor on, `/login` returns a token typed `mfa_pending` and sets no refresh cookie — no session exists until a code is verified. The type check lives in the `protect` middleware every route already uses, so a route added tomorrow is covered without anyone maintaining a list. TOTP is ~150 lines of `node:crypto` against the RFC 6238 vectors rather than a dependency, each code is single-use within its own 30-second window, and guessing is bounded by a per-account lockout rather than by the IP rate limiter — which is keyed by address and deliberately fails open.
+**Trade-off.** `SameSite=Strict` only works because the browser reaches the API same-origin through rewrites in `client/vercel.json`. Setting `VITE_API_URL` in production silently reintroduces a cross-site split — `.vercel.app` is on the Public Suffix List, so the cookie is never sent — and the only symptom is that every session dies after 15 minutes. That variable must stay empty in production.
 
-**snake_case in, camelCase out.** Postgres columns are `snake_case`; the API contract is `camelCase`. The whole translation lives in `server/db/helpers.js`.
+### Keyset pagination, with ranking pushed into SQL
 
-**Demo mode is a complete second backend.** `DEMO_MODE=true` replaces the entire `/api` surface with an in-memory store — same paths, same shapes. The client can't tell the difference.
+`server/routes/posts.js`, `server/db/migrations/006_feed.sql`
 
-**Features degrade instead of failing.** No `ANTHROPIC_API_KEY` → AI routes return 503 and the UI hides them. No search migrations → search falls back to `ILIKE`. Sharp unavailable → images store unoptimized. Nothing crashes because an optional key is absent.
+`GET /api/posts` returns an opaque cursor: base64url of `created_at|id`. The SQL tiebreaks on both columns, so a post arriving mid-scroll cannot shift rows across a page boundary and produce a duplicate or a gap — which offset pagination does by construction.
+
+Ranking runs inside `feed_for_user`, scoring against `follows` and `interest_tags`. It is deliberately **bucketed by day and ranked within the bucket**, not sorted globally by score: a global sort lets one followed author's month-old post outrank everything from today, which makes the feed feel broken.
+
+**Trade-off.** Ranking logic now lives in a plpgsql function rather than JavaScript — harder to unit test, and it has to be migrated rather than deployed. The route degrades to plain `created_at DESC` if the function is absent, which keeps a database missing migration 006 usable rather than broken.
+
+### Point transfers are a database transaction, not application logic
+
+`server/db/migrations/005_hardening.sql`
+
+Transferring points was a read-modify-write across two `users` rows. Two concurrent requests both read the old balance and both write, so points could be spent twice. No amount of JavaScript retry logic closes that.
+
+`transfer_points()` takes `FOR UPDATE` locks on both rows inside one transaction, with `ORDER BY id` in the lock step so two callers transferring in opposite directions acquire in the same sequence and cannot deadlock.
+
+**Trade-off.** Business rules — the minimum balance floor, the self-transfer rejection — now live in SQL, where they are invisible to anyone reading the route. The route falls back to a non-atomic JS path if the function is missing, which is a correctness compromise made deliberately so a partially-migrated database still works.
+
+### Rate limiting in Postgres, and what that forces elsewhere
+
+`server/middleware/rateLimit.js`
+
+`express-rate-limit`'s default store is per-process memory. On serverless that is close to useless: every concurrent lambda holds its own counter and every cold start resets it, so the effective limit is multiplied by instance count. Counters live in a `rate_limits` table incremented through an atomic RPC instead.
+
+Two properties matter. Each limiter namespaces its own keys — they previously shared one row keyed only by IP, so roughly ten page loads exhausted the hourly budget for password changes. And the store **fails open**: if Postgres is unreachable the request is allowed, because rate limiting is a mitigation and should not become an outage.
+
+**Trade-off.** Failing open means it cannot be the last line of defence for anything. That is why two-factor verification carries its own per-account lockout in `server/utils/mfa.js` rather than relying on the IP limiter — a six-digit code against an attacker who already has the password needs a guarantee, not a mitigation.
+
+### Uploads bypass the API entirely
+
+`server/utils/postMedia.js`, `client/src/services/uploads.js`
+
+A serverless function caps its request body at roughly 4.5MB. Media used to be posted as multipart through the API, so the composer's advertised 50MB was unreachable — an ordinary phone photo failed at the platform edge before any application code ran, with nothing useful to show the user.
+
+The browser now asks for a signed URL, PUTs straight to Supabase Storage, and sends the API only an object key. Images are downscaled to 1600px WebP in the browser first, which the server used to do with sharp; a 23MB photo becomes about 850KB, so the upload is also far smaller than the original.
+
+**Trade-off, and it is a real one.** A Supabase signed upload URL cannot carry `Content-Length` or `Content-Type` conditions the way an S3 presigned POST can. Between minting a ticket and attaching it, the client controls the bytes completely — so every check has to happen afterwards, against the stored object: ownership from the key prefix, real size from `statObject`, and the actual media type from a 32-byte ranged read rather than the declared MIME. A post is only ever created from an object that passed all of them.
+
+What that does not prevent is the object landing in the bucket in the first place. Nothing in application code can. That is bounded by the bucket's own file size limit (currently 50MB on `posts`), a 10-per-hour presign limit, and the daily sweep that deletes objects never attached to a post.
+
+### Demo mode is a second backend, not a flag
+
+`server/routes/demo.js`, `server/db/demoStore.js`
+
+With `DEMO_MODE=true`, `index.js` mounts an entirely separate router backed by an in-memory store — 57 endpoints mirroring the real surface, same paths, same response shapes, seeded with content. The client cannot tell the difference, and the app runs with no database at all.
+
+**Trade-off.** It is a genuine second implementation, roughly 1,400 lines, and nothing structurally keeps it in step with the real routes. It has drifted before. It earns its place by making the project runnable in about thirty seconds by someone who will not create a Supabase project, and by giving tests a target that needs no network.
+
+### No ORM, and what that implies for authorization
+
+Routes call PostgREST directly through `getSupabase()`. The API holds the `service_role` key, which **bypasses Row Level Security**. RLS is enabled on every table, but it is not the enforcement layer — Express is. Every route does its own authorization in JavaScript, and any new route must too.
+
+**Trade-off.** This is the riskiest decision in the codebase. It buys simplicity and one less abstraction over a schema that is already explicit SQL; it costs the safety net that would otherwise catch a route that forgets to scope a query by user. Column naming is `snake_case` in Postgres and `camelCase` over the wire, with the entire translation confined to `server/db/helpers.js`.
 
 ---
 
-## Stack
+## Local setup
 
-| Layer | Choices |
-|---|---|
-| **Frontend** | React 19 · Vite 8 · React Router 7 · Motion 12 · Embla · Lucide · Axios |
-| **Styling** | ~2,100 lines of hand-written CSS. No framework. Custom properties + `data-theme` light/dark, resolved before first paint |
-| **Backend** | Node 20 · Express 4 · JWT · bcrypt (cost 12) · Sharp · Multer · Helmet · Postgres-backed rate limiting |
-| **Data** | Supabase Postgres via PostgREST — 20 tables, 10 functions, 21 indexes |
-| **Services** | Razorpay payments · Anthropic Claude · Nodemailer · Supabase Storage & Realtime |
-| **Infra** | Two Vercel projects (static SPA + serverless API) · Vercel Cron · GitHub Actions CI |
-| **Tests** | Vitest + Supertest — 143 tests, no database required |
+Requires Node 18+.
 
-**By the numbers:** `22` pages · `93` REST endpoints across 18 route modules (plus a 57-endpoint in-memory mirror for demo mode) · `22` tables · `9` shared UI primitives · `8` custom hooks · `143` tests
+```bash
+git clone https://github.com/vikramyadav1404/nexora.git
+cd nexora
+npm run install-all
+```
+
+### Without a database
+
+```bash
+cd server && DEMO_MODE=true npm start   # terminal 1
+cd client && npm run dev                # terminal 2
+```
+
+`http://localhost:5173`, sign in as `demo@nexora.com` / `demo1234`. Everything works except persistence.
+
+### Against Postgres
+
+1. Create a project at supabase.com.
+2. Build and run the schema:
+   ```bash
+   cd server && npm run migration:runner -- --fresh --verify
+   ```
+   That concatenates every numbered migration into one paste-ready file and appends a `SELECT` that confirms the objects exist. Paste it into the Supabase SQL Editor.
+3. Copy `server/.env.example` to `server/.env`. Four variables are required — `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `CLIENT_URL` — and `DEMO_MODE=false`.
+4. `npm run dev` from the root runs both.
+
+Fourteen further variables are optional, each gating one feature: `ANTHROPIC_API_KEY` (AI routes 503 without it), `SUPABASE_JWT_SECRET` (realtime notifications), `RAZORPAY_KEY_ID`/`_SECRET`/`_WEBHOOK_SECRET` (real payments; mock checkout otherwise), `MFA_SECRET_KEY` (encrypts stored TOTP secrets), `CRON_SECRET`, `USE_SUPABASE_STORAGE`, `EMAIL_USER`/`EMAIL_PASS`, `SENTRY_DSN`. Client-side: `VITE_API_URL` (must stay empty in production — see the auth section), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+
+Never put `SUPABASE_SERVICE_ROLE_KEY` in `client/.env`. The client gets the anon key only.
+
+### Scripts
+
+```bash
+npm run dev            # root: api + client
+npm run check          # root: lint + client build
+
+cd server
+npm test               # 176 tests, no database needed
+npm run migration:runner -- 005 006   # build a paste-ready SQL file
+npm run backup         # dump every table to backups/*.json
+npm run smoke          # hit /api/ready and /api/health
+
+cd client
+npm run lint           # oxlint
+```
 
 ---
 
-## Features
+## API surface
 
-**Social feed** — post text and images, like, comment, share, save. Personalised: posts from people you follow and topics you picked rank higher.
+93 endpoints across 18 modules, all under `/api`. Roughly:
 
-**Q&A** — ask, answer, upvote, accept. Your daily question allowance depends on your subscription tier.
+| Group | Count | Covers |
+|---|---|---|
+| `users` | 19 | profile, friends, follows, interests, profile media attach |
+| `auth` | 18 | register, login, refresh, logout, two-factor, password recovery |
+| `admin` · `posts` | 6 each | moderation queue and user actions; feed CRUD, likes, comments |
+| `ai` · `questions` · `subscriptions` · `cron` | 5 each | Claude-backed assists; Q&A; Razorpay + webhook; scheduled jobs |
+| `answers` · `safety` | 4 each | answers and voting; blocks and reports |
+| `bookmarks` · `notifications` · `rewards` | 3 each | saved items; notification feed; points and leaderboard |
+| `challenges` · `spaces` | 2 each | weekly goals; the 16 interest communities |
+| `digests` · `search` · `uploads` | 1 each | weekly digest; global search; signed upload tickets |
 
-**Spaces** — 16 interest communities. Onboarding picks your interests, auto-follows the relevant hubs, and seeds your feed so day one isn't empty.
-
-**Points & rewards** — earn by answering, transfer to other users, unlock badges, climb the leaderboard.
-
-**Subscriptions** — Bronze / Silver / Gold via Razorpay, each raising your daily question limit.
-
-**AI assists** *(optional)* — Claude drafts an answer, rewrites a vague question, suggests tags, triages moderation reports.
-
-**Account security** — 15-minute access tokens with rotating refresh tokens and theft detection, plus optional two-factor authentication (TOTP) with single-use backup codes.
-
-**Safety** — block users, report content, admin moderation queue.
+A separate 57-endpoint mirror in `server/routes/demo.js` shadows this surface when `DEMO_MODE=true`.
 
 ---
 
 ## Testing
 
 ```bash
-cd server && npm test     # 143 tests, no DB — injects a fake Supabase client
+cd server && npm test
 ```
 
-Coverage is deliberately weighted toward what's expensive to get wrong:
+176 tests, 11 files, no database — the suite injects a fake PostgREST client (`server/test/helpers/fakeSupabase.js`) that also stubs Storage. Coverage is weighted toward things that are expensive to get wrong rather than toward line count:
 
-- **Payment verification** — including a regression test that replays a real privilege-escalation attack and asserts it now fails
-- **Points transfer under concurrency** — proves points can't be double-spent
-- **Token rotation** — reuse of a rotated refresh token revokes the whole family
-- **Two-factor** — RFC 6238 vectors, replay inside a code's own 30-second window, and the per-account lockout
-- **Feed cursor pagination** — including the 60-post cap that used to truncate the feed
-- **Search input escaping** — against PostgREST filter injection
-- **Image pipeline** — resize caps, WebP conversion, corrupt-file handling
+- **Payments** — a regression test replays the privilege-escalation attack that used to work (a client-supplied `isMock` flag skipping signature verification) and asserts it now fails.
+- **Two-factor** — all six RFC 6238 vectors including `T=20000000000`, which catches a counter written as 32-bit; replay of a code inside its own 30-second window; the per-account lockout.
+- **Query counts** — `GET /api/bookmarks` and `GET /api/spaces/:id` are asserted to issue the same number of queries for 20 rows as for 1. Response-shape tests pass just as happily against an N+1, which is how one survived two cleanup passes unnoticed.
+- **Token rotation** — reuse of a rotated refresh token revokes the whole family.
+- **Error contract** — the underlying Postgres text never reaches the response; the dev-only `detail` field stays absent unless `NODE_ENV` is exactly `development`.
+
+There are no frontend tests.
 
 ---
 
-<details>
-<summary><strong>Running against a real database</strong></summary>
+## Known gaps
 
-<br />
+Stated rather than omitted.
 
-1. Create a project at [supabase.com](https://supabase.com)
-2. Build the setup script and run it in the **SQL Editor**:
-
-```bash
-cd server && npm run migration:runner -- --fresh --verify
-```
-
-   This concatenates every numbered migration in `server/db/migrations/` into one
-   paste-ready file — 22 tables, 10 functions, every index — and appends a `SELECT`
-   that confirms the objects were created. Open the file it names, copy all of it,
-   paste into the SQL Editor, press Run.
-
-   To apply only some migrations later, list them: `npm run migration:runner -- 008 009`
-
-3. Copy `server/.env.example` → `server/.env`:
-
-```env
-DEMO_MODE=false
-SUPABASE_URL=https://xxxx.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=...     # secret — server only, never the client
-JWT_SECRET=<long random string>
-CLIENT_URL=http://localhost:5173
-```
-
-4. `npm run dev` from the root starts both.
-
-</details>
-
-<details>
-<summary><strong>Environment variables</strong></summary>
-
-<br />
-
-**Required** (server): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `CLIENT_URL`
-
-**Optional** — each unlocks a feature, and the app runs fine without it:
-
-| Variable | Unlocks |
-|---|---|
-| `ANTHROPIC_API_KEY` | AI answer drafting, question rewriting, auto-tagging, moderation triage |
-| `SUPABASE_JWT_SECRET` | Live notification badge over Supabase Realtime |
-| `RAZORPAY_KEY_ID` / `_SECRET` | Real payments (mock checkout without them) |
-| `RAZORPAY_WEBHOOK_SECRET` | Recovers payments whose browser callback never lands |
-| `CRON_SECRET` | Scheduled jobs |
-| `SENTRY_DSN` | Error reporting |
-| `USE_SUPABASE_STORAGE` | Cloud media storage instead of local disk |
-| `EMAIL_USER` / `EMAIL_PASS` | Transactional email (Gmail app password) |
-
-Client: `VITE_API_URL`, plus optionally `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` for Realtime.
-
-> **Never** put `SUPABASE_SERVICE_ROLE_KEY` in `client/.env`. It bypasses all database security. The client gets the `anon` key only.
-
-</details>
-
-<details>
-<summary><strong>Project layout</strong></summary>
-
-<br />
-
-```
-client/
-  src/
-    components/ui/     Shared primitives (Avatar, Sheet, Lightbox, SmartImage…)
-    contexts/          AuthContext — the single source of session truth
-    hooks/             useInfiniteScroll, useOptimistic, usePullToRefresh…
-    pages/             22 route components, all lazy-loaded
-    services/          axios instance, Supabase Realtime client
-    styles/            index.css (tokens + components), primitives.css
-server/
-  db/
-    migrations/        SQL files, run in order
-    helpers.js         Row → API-shape translation
-    demoStore.js       In-memory backend for DEMO_MODE
-  middleware/          auth (JWT), admin, rateLimit
-  routes/              17 modules, 79 endpoints
-  utils/               claude, image, storage, email, respond, observability
-  test/                Vitest suites
-```
-
-</details>
-
-<details>
-<summary><strong>Deployment</strong></summary>
-
-<br />
-
-Two Vercel projects from one repo.
-
-**API** (`server/`) — Node serverless. Set the env vars above in the Vercel dashboard. `server/vercel.json` registers two cron jobs.
-
-**Frontend** (`client/`) — static build with SPA rewrite. Set `VITE_API_URL` to the deployed API origin.
-
-```bash
-cd server && vercel --prod
-cd client && vercel --prod
-```
-
-**Keeping the database alive:** free Supabase projects pause after ~1 week of inactivity. The daily cron job (`/api/cron/daily`) touches the database and prevents this.
-
-</details>
-
-<details>
-<summary><strong>Security notes</strong></summary>
-
-<br />
-
-- Passwords bcrypt-hashed at cost 12; hashes never leave the server
-- Payment verification derives the plan from the stored transaction and verifies the HMAC in constant time
-- Point transfers run inside a Postgres function with row locks
-- User input is escaped before reaching PostgREST filter strings
-- Uploaded images have EXIF metadata stripped, removing GPS coordinates
-- 500 responses return a generic message plus a request ID; the full error goes to the server log only
-- Rate limits live in Postgres, so they survive serverless cold starts
-
-**Caveat, stated plainly:** the API uses the `service_role` key, which bypasses Row Level Security. RLS is enabled on every table but is *not* the enforcement layer — Express is. Any new route must do its own authorisation.
-
-</details>
-
----
-
-## Status
-
-Live and working. Some features ship dormant and switch on when their key is set.
-
-Known gaps, honestly:
-
-- **Video isn't transcoded.** Images are optimised; videos upload as-is, up to 50 MB.
-- **No frontend tests.** The 143 tests cover the API only.
-- **No direct messages.** The social graph supports friends and follows, but there's no messaging.
+- **Ranked search is not wired up.** Migration 007 creates `search_questions`, `search_posts` and `search_people` with `tsvector` columns, GIN indexes and `ts_rank` scoring. Nothing calls them. `server/routes/search.js` and the people search in `server/routes/users.js` both still use `ILIKE '%q%'`, which no index can serve.
+- **`storage_key` is not recorded until migration 011 is applied.** The insert falls back to omitting the column and logs a warning once, so posting still works — but until 011 runs, uploaded objects cannot be swept or deleted alongside their post. Rows written before 011, and any written by the multipart path, keep an empty key permanently.
+- **`audit_logs` exists in the schema and nothing writes to it.**
+- **Video is stored, never transcoded.** `server/utils/image.js` optimises images to WebP and passes video through untouched.
+- **Demo mode can drift** from the real routes, as described above.
+- **No frontend tests.**
 
 ---
 
 ## License
 
-MIT © Vikram Yadav
+MIT

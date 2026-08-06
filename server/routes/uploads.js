@@ -8,10 +8,16 @@ const {
   configFor,
   isAllowedMime,
   createUploadTicket,
-  ALLOWED_MIME
+  mimeMapFor
 } = require('../utils/mediaStorage');
 
-const KINDS = ['avatar', 'cover'];
+/**
+ * 'post' joins the profile kinds here so feed attachments take the same route:
+ * browser PUTs straight to storage, server verifies the object by key
+ * afterwards. Multipart posts went through the Vercel function, which rejects a
+ * body over ~4.5MB, so the composer's advertised 50MB was never real.
+ */
+const KINDS = ['avatar', 'cover', 'post'];
 
 /**
  * Without migration 008 there is nowhere to record the key, so an upload would
@@ -45,9 +51,11 @@ router.post('/presign', protect, requireMediaSchema, uploadLimiter, asyncHandler
     return res.status(400).json({ message: `kind must be one of: ${KINDS.join(', ')}` });
   }
 
-  if (!isAllowedMime(mimeType)) {
+  // Post attachments allow video; avatars and covers still do not.
+  if (!isAllowedMime(mimeType, kind)) {
+    const allowed = Object.keys(mimeMapFor(kind)).join(', ');
     return res.status(400).json({
-      message: `Unsupported image type. Use ${Object.keys(ALLOWED_MIME).join(', ')}.`
+      message: `Unsupported file type. Use ${allowed}.`
     });
   }
 
