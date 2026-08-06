@@ -5,6 +5,17 @@
 const bcrypt = require('bcryptjs');
 const { randomUUID } = require('crypto');
 const { INTERESTS, SEED_POSTS, CREATORS } = require('./interests');
+/*
+ * The weekly challenges are the same list the real backend serves, so demo mode
+ * imports them rather than keeping a second copy. Both files had a byte-for-byte
+ * identical array, which meant changing a reward in one place silently left demo
+ * mode showing the old one.
+ *
+ * Safe to require here: features.js only calls getSupabase() inside its
+ * functions, so pulling it in does not try to reach a database that demo mode
+ * deliberately does not have.
+ */
+const { CHALLENGES } = require('./features');
 
 const store = {
   users: new Map(),
@@ -20,13 +31,6 @@ const store = {
   questions: new Map(),
   ready: false
 };
-
-const CHALLENGES = [
-  { id: 'answer_3', title: 'Helpful Human', desc: 'Post 3 answers this week', goal: 3, metric: 'answers', reward: 15 },
-  { id: 'post_2', title: 'Share the Love', desc: 'Create 2 feed posts', goal: 2, metric: 'posts', reward: 10 },
-  { id: 'follow_3', title: 'Network Builder', desc: 'Follow 3 people', goal: 3, metric: 'follows', reward: 10 },
-  { id: 'streak_3', title: 'On Fire', desc: 'Keep a 3-day activity streak', goal: 3, metric: 'streak', reward: 20 }
-];
 
 function shapeDemoUser(u, extras = {}) {
   return {
