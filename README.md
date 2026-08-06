@@ -51,11 +51,11 @@ The whole API is one serverless handler — `server/vercel.json` routes `/(.*)` 
 | Styling | Hand-written CSS, custom properties, `data-theme` light/dark. No framework |
 | Backend | Node, Express 4, `helmet`, `compression`, `express-rate-limit` |
 | Data access | `@supabase/supabase-js` against PostgREST. **No ORM** — no Prisma, no Knex, no `pg` |
-| Schema | Raw SQL, 12 numbered migrations in `server/db/migrations/` |
+| Schema | Raw SQL, 13 numbered migrations in `server/db/migrations/` |
 | Auth | `jsonwebtoken`, `bcryptjs` (cost 12), TOTP implemented against `node:crypto` |
 | Media | `sharp` server-side, `multer` memory storage, Supabase Storage buckets |
 | Optional services | Razorpay, Anthropic SDK, Nodemailer, Sentry (raw HTTP, no SDK) |
-| Tests | Vitest + Supertest, 176 tests across 11 files, no database required |
+| Tests | Vitest + Supertest, 209 tests across 13 files, no database required |
 
 **Counted from the code:** 93 REST endpoints across 18 route modules, plus a separate 57-endpoint in-memory mirror for demo mode. 22 pages, 19 of them lazy-loaded. 10 shared UI primitives, 8 custom hooks.
 
@@ -212,7 +212,7 @@ A separate 57-endpoint mirror in `server/routes/demo.js` shadows this surface wh
 cd server && npm test
 ```
 
-176 tests, 11 files, no database — the suite injects a fake PostgREST client (`server/test/helpers/fakeSupabase.js`) that also stubs Storage. Coverage is weighted toward things that are expensive to get wrong rather than toward line count:
+209 tests, 13 files, no database — the suite injects a fake PostgREST client (`server/test/helpers/fakeSupabase.js`) that also stubs Storage. Coverage is weighted toward things that are expensive to get wrong rather than toward line count:
 
 - **Payments** — a regression test replays the privilege-escalation attack that used to work (a client-supplied `isMock` flag skipping signature verification) and asserts it now fails.
 - **Two-factor** — all six RFC 6238 vectors including `T=20000000000`, which catches a counter written as 32-bit; replay of a code inside its own 30-second window; the per-account lockout.
@@ -228,9 +228,11 @@ There are no frontend tests.
 
 Stated rather than omitted.
 
-- **Ranked search is not wired up.** Migration 007 creates `search_questions`, `search_posts` and `search_people` with `tsvector` columns, GIN indexes and `ts_rank` scoring. Nothing calls them. `server/routes/search.js` and the people search in `server/routes/users.js` both still use `ILIKE '%q%'`, which no index can serve.
+- **Search returns at most 50 results per type, and cannot page past that.** `search_questions`, `search_posts` and `search_people` all end in `LIMIT LEAST(GREATEST(p_limit, 1), 50)`. Ranked results have no usable cursor either — rank is not monotonic with time, so the `created_at` keyset the feed uses does not apply. Paging deeper needs a signature change.
+- **A query that is only a typo finds nothing.** `search_questions` and `search_posts` filter on `search_vector @@ websearch_to_tsquery(...)` before ranking, so trigram similarity can only reorder results that full-text search already matched — it cannot surface one on its own. A query of nothing but stopwords produces an empty tsquery and matches nothing, by the same mechanism.
+- **The people search in `server/routes/users.js` still uses `ILIKE '%q%'`,** which no index can serve because of the leading wildcard. `/api/search` no longer does.
 - **`storage_key` is not recorded until migration 011 is applied.** The insert falls back to omitting the column and logs a warning once, so posting still works — but until 011 runs, uploaded objects cannot be swept or deleted alongside their post. Rows written before 011, and any written by the multipart path, keep an empty key permanently.
-- **`audit_logs` exists in the schema and nothing writes to it.**
+- **`audit_logs` is defined in `004_production.sql` but does not exist in the database** — 004 was never applied. Nothing writes to it either. Migration 012 re-states the rest of 004 and deliberately leaves this table out.
 - **Video is stored, never transcoded.** `server/utils/image.js` optimises images to WebP and passes video through untouched.
 - **Demo mode can drift** from the real routes, as described above.
 - **No frontend tests.**
