@@ -178,7 +178,19 @@ Coverage is deliberately weighted toward what's expensive to get wrong:
 <br />
 
 1. Create a project at [supabase.com](https://supabase.com)
-2. Open **SQL Editor** and run `server/db/migrations/SETUP_ALL.sql` — creates all 20 tables, 10 functions, 21 indexes
+2. Build the setup script and run it in the **SQL Editor**:
+
+```bash
+cd server && npm run migration:runner -- --fresh --verify
+```
+
+   This concatenates every numbered migration in `server/db/migrations/` into one
+   paste-ready file — 22 tables, 10 functions, every index — and appends a `SELECT`
+   that confirms the objects were created. Open the file it names, copy all of it,
+   paste into the SQL Editor, press Run.
+
+   To apply only some migrations later, list them: `npm run migration:runner -- 008 009`
+
 3. Copy `server/.env.example` → `server/.env`:
 
 ```env
