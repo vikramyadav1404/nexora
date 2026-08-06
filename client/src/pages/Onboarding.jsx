@@ -86,10 +86,27 @@ export default function Onboarding() {
   };
 
   return (
-    <div className="onboarding-shell">
-      <div className="animate-slideUp onboarding-card">
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg-base)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 20
+    }}>
+      <div className="animate-slideUp" style={{
+        width: '100%',
+        maxWidth: 560,
+        background: 'var(--bg-surface)',
+        borderRadius: 12,
+        boxShadow: '0 2px 12px rgba(0,0,0,0.12)',
+        padding: '28px 24px 24px'
+      }}>
         <div style={{ textAlign: 'center', marginBottom: 20 }}>
-          <div className="onboarding-badge">
+          <div style={{
+            width: 52, height: 52, borderRadius: '50%', margin: '0 auto 12px',
+            background: 'var(--nx-violet-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}>
             <Sparkles size={24} color="#0866FF" />
           </div>
           <h1 style={{ fontSize: 26, fontWeight: 700, marginBottom: 6 }}>
@@ -119,7 +136,17 @@ export default function Onboarding() {
                   key={g.id}
                   type="button"
                   onClick={() => setGender(g.id)}
-                  className={`onboarding-choice${gender === g.id ? ' is-selected' : ''}`}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: gender === g.id ? '2px solid #0866FF' : '1px solid var(--border)',
+                    background: gender === g.id ? 'var(--nx-violet-soft)' : 'var(--bg-raised)',
+                    fontWeight: 600,
+                    fontSize: 14,
+                    cursor: 'pointer',
+                    color: 'var(--text-base)',
+                    fontFamily: 'var(--font-body)'
+                  }}
                 >
                   {g.label}
                 </button>
@@ -132,7 +159,12 @@ export default function Onboarding() {
           Interests <span style={{ fontWeight: 400 }}>({selected.length}/8)</span>
         </div>
 
-        <div className="onboarding-grid">
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
+          gap: 8,
+          marginBottom: 22
+        }}>
           {interests.map(item => {
             const active = selected.includes(item.id);
             return (
@@ -140,7 +172,19 @@ export default function Onboarding() {
                 key={item.id}
                 type="button"
                 onClick={() => toggle(item.id)}
-                className={`onboarding-chip${active ? ' is-selected' : ''}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '12px 12px',
+                  borderRadius: 10,
+                  border: active ? '2px solid #0866FF' : '1px solid var(--border-soft)',
+                  background: active ? 'var(--nx-violet-soft)' : 'var(--bg-raised)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontFamily: 'var(--font-body)',
+                  position: 'relative'
+                }}
               >
                 <span style={{ fontSize: 18 }}>{item.emoji}</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-base)' }}>
@@ -164,7 +208,9 @@ export default function Onboarding() {
           {loading ? <div className="spinner" /> : 'Build my feed'}
         </button>
 
-        <p className="onboarding-note">
+        <p style={{
+          marginTop: 14, fontSize: 12, color: 'var(--text-faint)', textAlign: 'center', lineHeight: 1.4
+        }}>
           We&apos;ll auto-follow interest hubs and show related posts on your home page. You can change this later in Settings.
         </p>
       </div>
