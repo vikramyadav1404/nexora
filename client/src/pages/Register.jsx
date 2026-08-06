@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { X, Eye, EyeOff } from 'lucide-react';
+import { X } from 'lucide-react';
+import PasswordInput from '../components/PasswordInput';
 
 const GENDERS = [
   { id: 'female', label: 'Female' },
@@ -18,7 +19,6 @@ export default function Register() {
     firstName: '', middleName: '', lastName: '',
     email: '', phone: '', password: '', confirm: '', gender: ''
   });
-  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -190,30 +190,15 @@ export default function Register() {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div className="form-group" style={{ marginBottom: 12, position: 'relative' }}>
-                  <input
-                    id="register-password"
-                    type={showPw ? 'text' : 'password'}
-                    className="form-input"
-                    placeholder="New password"
-                    value={form.password}
-                    onChange={e => setForm({ ...form, password: e.target.value })}
-                    required
-                    autoComplete="new-password"
-                    style={{ background: 'var(--bg-raised)', fontSize: 15, padding: '11px', paddingRight: 36 }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPw(!showPw)}
-                    style={{
-                      position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-                      background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)',
-                      display: 'flex', padding: 0
-                    }}
-                  >
-                    {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
-                </div>
+                <PasswordInput
+                  id="register-password"
+                  value={form.password}
+                  onChange={e => setForm({ ...form, password: e.target.value })}
+                  placeholder="New password"
+                  autoComplete="new-password"
+                  compact
+                  wrapperStyle={{ marginBottom: 12 }}
+                />
                 <div className="form-group" style={{ marginBottom: 12 }}>
                   <input
                     id="register-confirm"

@@ -506,3 +506,42 @@
   min-height: 1px;
   width: 100%;
 }
+
+/* ─── Password field ─────────────────────────
+   Backs components/PasswordInput.jsx. The eye toggle is absolutely positioned
+   inside the input, so the wrapper has to establish the containing block and
+   the input needs room on the right for it. Both the login form and the signup
+   form carried this as an identical inline style object. */
+.pw-field {
+  position: relative;
+}
+
+.pw-field .form-input {
+  padding-right: 44px;
+}
+
+.pw-toggle {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 0;
+  display: flex;
+  cursor: pointer;
+  color: var(--text-faint);
+}
+
+/* Signup sits the password next to a confirm field on one row, so its inputs
+   are tighter and the toggle sits closer in. */
+.pw-field-compact .form-input {
+  background: var(--bg-raised);
+  font-size: 15px;
+  padding: 11px;
+  padding-right: 36px;
+}
+
+.pw-field-compact .pw-toggle {
+  right: 10px;
+}

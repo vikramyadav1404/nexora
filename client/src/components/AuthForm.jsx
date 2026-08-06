@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Eye, EyeOff } from 'lucide-react';
+import PasswordInput from './PasswordInput';
 
 /**
  * The email + password half of signing in.
@@ -27,7 +27,6 @@ export default function AuthForm({ idPrefix = 'login', onSuccess, onMfaRequired 
   const navigate = useNavigate();
 
   const [form, setForm] = useState({ email: '', password: '' });
-  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -69,31 +68,11 @@ export default function AuthForm({ idPrefix = 'login', onSuccess, onMfaRequired 
           />
         </div>
 
-        <div className="form-group" style={{ position: 'relative' }}>
-          <input
-            id={`${idPrefix}-password`}
-            type={showPw ? 'text' : 'password'}
-            className="form-input"
-            placeholder="Password"
-            value={form.password}
-            onChange={e => setForm({ ...form, password: e.target.value })}
-            required
-            autoComplete="current-password"
-            style={{ paddingRight: 44 }}
-          />
-          <button
-            type="button"
-            onClick={() => setShowPw(!showPw)}
-            aria-label={showPw ? 'Hide password' : 'Show password'}
-            style={{
-              position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-              background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)',
-              display: 'flex', padding: 0
-            }}
-          >
-            {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
-          </button>
-        </div>
+        <PasswordInput
+          id={`${idPrefix}-password`}
+          value={form.password}
+          onChange={e => setForm({ ...form, password: e.target.value })}
+        />
 
         <button
           id={`${idPrefix}-submit`}
