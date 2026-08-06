@@ -18,9 +18,22 @@ const { getSupabase } = require('../db/supabase');
  * authentication boundary.
  */
 class PostgresStore {
-  constructor() {
+  /**
+   * `name` separates one limiter's counter from another's.
+   *
+   * It used to be a hardcoded 'rl' for every instance, and since the key
+   * express-rate-limit passes is just the client IP, all five limiters
+   * incremented a single shared row. apiLimiter runs on every /api request, so
+   * roughly ten page loads exhausted sensitiveLimiter's hourly budget of ten —
+   * and password change, email verification, account deletion and MFA setup all
+   * started returning 429 to people who had done nothing wrong.
+   *
+   * The bug was invisible until migration 005 was applied, because until then
+   * the store threw on every call and failed open, so nothing was ever counted.
+   */
+  constructor(name = 'default') {
     this.windowMs = 60_000;
-    this.prefix = 'rl';
+    this.prefix = `rl:${name}`;
   }
 
   init(options) {
@@ -74,25 +87,27 @@ class PostgresStore {
  * Demo mode has no database, and a single local process makes MemoryStore
  * correct anyway — only reach for Postgres when we're actually on Supabase.
  */
-function makeStore() {
+function makeStore(name) {
   const demo = process.env.DEMO_MODE === 'true' || process.env.DEMO_MODE === '1';
   if (demo) return undefined;
-  return new PostgresStore();
+  return new PostgresStore(name);
 }
 
-function limiter({ windowMs, max, message }) {
+/** `name` must be unique per limiter — it is what keeps the counters apart. */
+function limiter({ name, windowMs, max, message }) {
   return rateLimit({
     windowMs,
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    store: makeStore(),
+    store: makeStore(name),
     message: { message }
   });
 }
 
 // general API traffic
 const apiLimiter = limiter({
+  name: 'api',
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_API || 400),
   message: 'Too many requests. Try again in a bit.'
@@ -100,6 +115,7 @@ const apiLimiter = limiter({
 
 // login / register / forgot
 const authLimiter = limiter({
+  name: 'auth',
   windowMs: 15 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_AUTH || 30),
   message: 'Too many login attempts. Wait 15 minutes.'
@@ -107,6 +123,7 @@ const authLimiter = limiter({
 
 // otp, password change, delete account
 const sensitiveLimiter = limiter({
+  name: 'sensitive',
   windowMs: 60 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_SENSITIVE || 10),
   message: 'Too many attempts. Try again later.'
@@ -114,6 +131,7 @@ const sensitiveLimiter = limiter({
 
 // posts / reports spam guard
 const writeLimiter = limiter({
+  name: 'write',
   windowMs: 60 * 1000,
   max: Number(process.env.RATE_LIMIT_WRITE || 30),
   message: 'Slow down a little.'
@@ -122,6 +140,7 @@ const writeLimiter = limiter({
 // Claude-backed endpoints — these cost real money per call, so they get their
 // own bucket rather than sharing the generous general one.
 const aiLimiter = limiter({
+  name: 'ai',
   windowMs: 60 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_AI || 40),
   message: 'You have used a lot of AI assists this hour. Try again later.'
@@ -131,6 +150,7 @@ const aiLimiter = limiter({
 // profile picture needs, and it caps how fast a compromised token could mint
 // write access to the bucket.
 const uploadLimiter = limiter({
+  name: 'upload',
   windowMs: 60 * 60 * 1000,
   max: Number(process.env.RATE_LIMIT_UPLOAD || 10),
   message: 'Too many upload requests this hour. Try again later.'
