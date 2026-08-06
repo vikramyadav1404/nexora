@@ -3,13 +3,15 @@ import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { Globe, Shield, Key, Smartphone, Mail, Check, AlertTriangle, RefreshCw, Eye, EyeOff, UserCheck, Users, Sparkles } from 'lucide-react';
+import { Globe, Shield, Key, Smartphone, Mail, Check, AlertTriangle, RefreshCw, Eye, EyeOff, UserCheck, Users, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import { LANGUAGE_META } from '../i18n/translations';
 import { Avatar } from '../components/ui';
 import TwoFactorPanel from '../components/TwoFactorPanel';
+import { soundEnabled, setSoundEnabled, playLike } from '../utils/sound';
 
 export default function Settings() {
   const { user, refreshUser, updateUser, logout } = useAuth();
+  const [soundOn, setSoundOn] = useState(soundEnabled());
   const navigate = useNavigate();
   const [tab, setTab] = useState('language');
   const [emailOtp, setEmailOtp] = useState('');
@@ -174,6 +176,43 @@ export default function Settings() {
                 </button>
               ))}
             </div>
+            {/* Sound. Toggling it on plays the jingle once — the whole point of
+                the setting is audible, so the confirmation should be too. */}
+            <div style={{ borderTop: '1px solid var(--border-soft)', marginTop: 24, paddingTop: 20 }}>
+              <h3 style={{ fontSize: 16, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                {soundOn ? <Volume2 size={17} /> : <VolumeX size={17} />}
+                Sounds
+              </h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 14 }}>
+                A short chime when you like a post. Saved on this device.
+              </p>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  className={`btn ${soundOn ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => {
+                    setSoundEnabled(true);
+                    setSoundOn(true);
+                    playLike(true);
+                    toast.success('Sounds on');
+                  }}
+                >
+                  <Volume2 size={15} /> On
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${soundOn ? 'btn-secondary' : 'btn-primary'}`}
+                  onClick={() => {
+                    setSoundEnabled(false);
+                    setSoundOn(false);
+                    toast.success('Sounds off');
+                  }}
+                >
+                  <VolumeX size={15} /> Off
+                </button>
+              </div>
+            </div>
+
             <div style={{ marginTop: 20, fontSize: 13, color: 'var(--text-faint)' }}>
               Streak: <strong>{user?.streakCount ?? '—'}</strong>
               {user?.onboardingCompleted && (
