@@ -1,14 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { Eye, EyeOff, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { ShieldCheck, ArrowLeft } from 'lucide-react';
+import AuthForm from '../components/AuthForm';
 
 export default function Login() {
-  const { login, verifyMfa } = useAuth();
+  const { verifyMfa } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ email: '', password: '' });
-  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -38,24 +37,6 @@ export default function Login() {
     navigate(user?.onboardingCompleted ? '/feed' : '/onboarding');
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-    try {
-      const result = await login(form.email, form.password);
-      if (result.mfaRequired) {
-        setPending(result.mfaToken);
-        return;
-      }
-      goAfterLogin(result.user);
-    } catch (err) {
-      setError(err.response?.data?.message || 'The email or password you entered is incorrect.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleVerify = async (e) => {
     e.preventDefault();
     setError('');
@@ -81,11 +62,12 @@ export default function Login() {
     }
   };
 
+  // AuthForm unmounts while the code step is showing, so going back remounts it
+  // with empty fields — the password does not need clearing by hand.
   const backToPassword = () => {
     setPending(null);
     setCode('');
     setError('');
-    setForm({ ...form, password: '' });
   };
 
   return (
@@ -178,73 +160,7 @@ export default function Login() {
                 </div>
               </>
             ) : (
-              <>
-            <form onSubmit={handleSubmit}>
-              <div className="form-group">
-                <input
-                  id="login-email"
-                  type="email"
-                  className="form-input"
-                  placeholder="Email address"
-                  value={form.email}
-                  onChange={e => setForm({ ...form, email: e.target.value })}
-                  required
-                  autoComplete="email"
-                />
-              </div>
-              <div className="form-group" style={{ position: 'relative' }}>
-                <input
-                  id="login-password"
-                  type={showPw ? 'text' : 'password'}
-                  className="form-input"
-                  placeholder="Password"
-                  value={form.password}
-                  onChange={e => setForm({ ...form, password: e.target.value })}
-                  required
-                  autoComplete="current-password"
-                  style={{ paddingRight: 44 }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPw(!showPw)}
-                  style={{
-                    position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                    background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)',
-                    display: 'flex', padding: 0
-                  }}
-                >
-                  {showPw ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-
-              <button
-                id="login-submit"
-                type="submit"
-                className="btn btn-primary"
-                style={{ width: '100%', height: 48, fontSize: 20, fontWeight: 700 }}
-                disabled={loading}
-              >
-                {loading ? <div className="spinner" /> : 'Log In'}
-              </button>
-            </form>
-
-            <div style={{ textAlign: 'center', marginTop: 14 }}>
-              <Link to="/forgot-password" style={{ fontSize: 14, color: 'var(--nx-violet)', fontWeight: 500 }}>
-                Forgotten password?
-              </Link>
-            </div>
-
-            <div className="auth-create-wrap">
-              <button
-                type="button"
-                className="btn-create"
-                onClick={() => navigate('/register')}
-                style={{ minWidth: 200 }}
-              >
-                Create new account
-              </button>
-            </div>
-              </>
+              <AuthForm idPrefix="login" onSuccess={goAfterLogin} onMfaRequired={setPending} />
             )}
           </div>
         </div>
