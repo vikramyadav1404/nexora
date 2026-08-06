@@ -3,8 +3,8 @@ const router = express.Router();
 const multer = require('multer');
 const { getSupabase } = require('../db/supabase');
 const {
-  isToday, getDailyPostLimit, shapePost, shapeAuthor, loadAuthorMap, groupBy,
-  withMediaColumns
+  isToday, getDailyPostLimit, shapeAuthor, withMediaColumns,
+  loadPostBundles, loadPostBundle
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { touchUserActivity, pushNotification } = require('../db/features');
@@ -22,52 +22,6 @@ const upload = multer({
 
 // Warn once, not once per request, if migration 006 hasn't been run.
 let feedRpcWarned = false;
-
-/**
- * Hydrate a whole page of posts in a fixed number of queries.
- *
- * This replaces a per-post `loadPostBundle` that issued 4–5 round trips each —
- * a page of 10 posts cost 42–52 requests to PostgREST. Now it is 5 regardless
- * of page size: media, likes, comments, post authors, comment authors.
- */
-async function loadPostBundles(db, posts) {
-  if (!posts.length) return [];
-  const ids = posts.map(p => p.id);
-
-  const [{ data: media }, { data: likes }, { data: comments }] = await Promise.all([
-    db.from('post_media').select('*').in('post_id', ids),
-    db.from('post_likes').select('post_id, user_id').in('post_id', ids),
-    db.from('post_comments').select('*').in('post_id', ids).order('created_at', { ascending: true })
-  ]);
-
-  // One author lookup covering both post authors and comment authors.
-  const authors = await loadAuthorMap(db, [
-    ...posts.map(p => p.author_id),
-    ...(comments || []).map(c => c.author_id)
-  ]);
-
-  const mediaBy = groupBy(media, 'post_id');
-  const likesBy = groupBy(likes, 'post_id');
-  const commentsBy = groupBy(comments, 'post_id');
-
-  return posts.map(post =>
-    shapePost(post, {
-      author: authors[post.author_id],
-      media: mediaBy[post.id] || [],
-      likes: likesBy[post.id] || [],
-      comments: (commentsBy[post.id] || []).map(c => ({
-        ...c,
-        author: authors[c.author_id] || shapeAuthor({ id: c.author_id, name: 'User' })
-      }))
-    })
-  );
-}
-
-/** Single-post convenience wrapper, used after create/comment. */
-async function loadPostBundle(db, post) {
-  const [shaped] = await loadPostBundles(db, [post]);
-  return shaped;
-}
 
 /** Opaque cursor so clients don't build their own keyset tuples. */
 function encodeCursor(post) {

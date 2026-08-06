@@ -21,6 +21,18 @@ function compare(row, op, col, val) {
   if (op === 'lt') return row[col] != null && row[col] < val;
   if (op === 'gt') return row[col] != null && row[col] > val;
   if (op === 'or') return val.some(([o, c, v]) => compare(row, o, c, v));
+  /*
+   * PostgREST `.contains(col, [a, b])` is the array `@>` operator: the column
+   * must contain *every* listed value. Used by spaces.js on posts.interest_tags
+   * and questions.tags. Implemented rather than stubbed for the reason in the
+   * parseOr note below — an operator that silently matches everything turns a
+   * filtered query into a full scan and still looks like a passing test.
+   */
+  if (op === 'contains') {
+    const cell = row[col];
+    if (!Array.isArray(cell)) return false;
+    return (Array.isArray(val) ? val : [val]).every(v => cell.includes(v));
+  }
   return true;
 }
 
@@ -66,6 +78,7 @@ class Query {
   lt(col, val) { this.filters.push(['lt', col, val]); return this; }
   gt(col, val) { this.filters.push(['gt', col, val]); return this; }
   or(expr) { this.filters.push(['or', null, parseOr(expr)]); return this; }
+  contains(col, val) { this.filters.push(['contains', col, val]); return this; }
   ilike() { return this; }
   limit(n) { this._limit = n; return this; }
 

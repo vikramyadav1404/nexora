@@ -4,36 +4,8 @@ const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
 const { sendError, asyncHandler } = require('../utils/respond');
 const {
-  shapePost, shapeQuestion, shapeAuthor, authorFields,
-  withMediaColumns
+  shapeQuestion, shapeAuthor, authorFields, loadPostBundles
 } = require('../db/helpers');
-
-async function loadPostBundle(db, post) {
-  const [{ data: author }, { data: media }, { data: likes }, { data: comments }] = await Promise.all([
-    db.from('users').select(authorFields()).eq('id', post.author_id).single(),
-    db.from('post_media').select('*').eq('post_id', post.id),
-    db.from('post_likes').select('user_id').eq('post_id', post.id),
-    db.from('post_comments').select('*').eq('post_id', post.id).order('created_at', { ascending: true })
-  ]);
-
-  let shapedComments = [];
-  if (comments?.length) {
-    const authorIds = [...new Set(comments.map(c => c.author_id))];
-    const { data: authors } = await db.from('users').select(withMediaColumns('id, name, avatar')).in('id', authorIds);
-    const map = Object.fromEntries((authors || []).map(a => [a.id, a]));
-    shapedComments = comments.map(c => ({
-      ...c,
-      author: shapeAuthor(map[c.author_id] || { id: c.author_id, name: 'User' })
-    }));
-  }
-
-  return shapePost(post, {
-    author: shapeAuthor(author),
-    media: media || [],
-    likes: likes || [],
-    comments: shapedComments
-  });
-}
 
 async function loadQuestionLite(db, q) {
   const { data: author } = await db.from('users').select(authorFields()).eq('id', q.author_id).single();
@@ -63,27 +35,37 @@ router.get('/', protect, asyncHandler(async (req, res) => {
 
   if (error) throw error;
 
+  /*
+   * Fetch every saved post in one query, then hydrate them all in one batch.
+   *
+   * This used to loop: one `posts` lookup per bookmark, then a private
+   * per-post loader that issued five more. Someone with 20 saved posts cost
+   * about 120 round trips to open the page. It is now two queries plus the
+   * five inside loadPostBundles, regardless of how many are saved.
+   */
+  const postIds = (rows || []).filter(b => b.target_type === 'post').map(b => b.target_id);
+  const questionIds = (rows || []).filter(b => b.target_type === 'question').map(b => b.target_id);
+
+  const [{ data: posts }, { data: questions }] = await Promise.all([
+    postIds.length ? db.from('posts').select('*').in('id', postIds) : { data: [] },
+    questionIds.length ? db.from('questions').select('*').in('id', questionIds) : { data: [] }
+  ]);
+
+  const bundles = await loadPostBundles(db, posts || []);
+  const postById = Object.fromEntries(bundles.map((p, i) => [(posts || [])[i].id, p]));
+
+  // loadQuestionLite is still per-question; questions carry far less with them
+  // and a saved-question list is short.
+  const questionById = Object.fromEntries(
+    await Promise.all((questions || []).map(async q => [q.id, await loadQuestionLite(db, q)]))
+  );
+
+  // Rebuild in the original order — `rows` is already newest-first.
   const enriched = [];
   for (const b of rows || []) {
-    if (b.target_type === 'post') {
-      const { data: post } = await db.from('posts').select('*').eq('id', b.target_id).maybeSingle();
-      if (!post) continue;
-      enriched.push({
-        type: 'post',
-        id: b.target_id,
-        createdAt: b.created_at,
-        item: await loadPostBundle(db, post)
-      });
-    } else if (b.target_type === 'question') {
-      const { data: q } = await db.from('questions').select('*').eq('id', b.target_id).maybeSingle();
-      if (!q) continue;
-      enriched.push({
-        type: 'question',
-        id: b.target_id,
-        createdAt: b.created_at,
-        item: await loadQuestionLite(db, q)
-      });
-    }
+    const item = b.target_type === 'post' ? postById[b.target_id] : questionById[b.target_id];
+    if (!item) continue; // the post or question was deleted after being saved
+    enriched.push({ type: b.target_type, id: b.target_id, createdAt: b.created_at, item });
   }
 
   res.json({ bookmarks: enriched });

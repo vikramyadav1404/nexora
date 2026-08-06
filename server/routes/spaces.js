@@ -5,7 +5,7 @@ const { protect } = require('../middleware/auth');
 const { INTERESTS } = require('../db/interests');
 const { sendError, asyncHandler } = require('../utils/respond');
 const {
-  shapeUser, shapePost, shapeQuestion, shapeAuthor, authorFields
+  shapeUser, shapeQuestion, shapeAuthor, loadPostBundles, loadAuthorMap
 } = require('../db/helpers');
 
 // GET /api/spaces
@@ -46,19 +46,9 @@ router.get('/:id', protect, asyncHandler(async (req, res) => {
     .order('created_at', { ascending: false })
     .limit(20);
 
-  const posts = await Promise.all((postRows || []).map(async (p) => {
-    const [{ data: author }, { data: media }, { data: likes }] = await Promise.all([
-      db.from('users').select(authorFields()).eq('id', p.author_id).single(),
-      db.from('post_media').select('*').eq('post_id', p.id),
-      db.from('post_likes').select('user_id').eq('post_id', p.id)
-    ]);
-    return shapePost(p, {
-      author: shapeAuthor(author),
-      media: media || [],
-      likes: likes || [],
-      comments: []
-    });
-  }));
+  // Three queries per post before this — 60 for a full Space. Now four total,
+  // and comments stay unfetched because this page never renders them.
+  const posts = await loadPostBundles(db, postRows || [], { withComments: false });
 
   const { data: qRows } = await db
     .from('questions')
@@ -67,15 +57,16 @@ router.get('/:id', protect, asyncHandler(async (req, res) => {
     .order('created_at', { ascending: false })
     .limit(20);
 
-  const questions = await Promise.all((qRows || []).map(async (q) => {
-    const { data: author } = await db.from('users').select(authorFields()).eq('id', q.author_id).single();
-    return shapeQuestion(q, {
-      author: shapeAuthor(author),
+  // Same shape as before, but one author lookup for all 20 rather than one each.
+  const qAuthors = await loadAuthorMap(db, (qRows || []).map(q => q.author_id));
+  const questions = (qRows || []).map(q =>
+    shapeQuestion(q, {
+      author: qAuthors[q.author_id] || shapeAuthor({ id: q.author_id, name: 'User' }),
       answers: [],
       upvotes: [],
       downvotes: []
-    });
-  }));
+    })
+  );
 
   const { data: memberRows } = await db
     .from('users')

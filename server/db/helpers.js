@@ -287,7 +287,62 @@ function groupBy(rows, key) {
   return out;
 }
 
+/**
+ * Hydrate a whole page of posts in a fixed number of queries.
+ *
+ * Five round trips regardless of page size: media, likes, comments, and one
+ * author lookup covering both post authors and comment authors. The version
+ * this replaced issued 4–5 per post, so a page of 10 cost 42–52 requests.
+ *
+ * It lives here rather than in routes/posts.js because three routes need it.
+ * bookmarks.js and spaces.js each kept their own per-post variant and so never
+ * got the fix — bookmarks was still doing five queries for every saved post.
+ */
+async function loadPostBundles(db, posts, { withComments = true } = {}) {
+  if (!posts.length) return [];
+  const ids = posts.map(p => p.id);
+
+  // Spaces lists posts without ever rendering their comments, so it opts out
+  // rather than fetching and shipping data the page throws away.
+  const [{ data: media }, { data: likes }, { data: comments }] = await Promise.all([
+    db.from('post_media').select('*').in('post_id', ids),
+    db.from('post_likes').select('post_id, user_id').in('post_id', ids),
+    withComments
+      ? db.from('post_comments').select('*').in('post_id', ids).order('created_at', { ascending: true })
+      : Promise.resolve({ data: [] })
+  ]);
+
+  const authors = await loadAuthorMap(db, [
+    ...posts.map(p => p.author_id),
+    ...(comments || []).map(c => c.author_id)
+  ]);
+
+  const mediaBy = groupBy(media, 'post_id');
+  const likesBy = groupBy(likes, 'post_id');
+  const commentsBy = groupBy(comments, 'post_id');
+
+  return posts.map(post =>
+    shapePost(post, {
+      author: authors[post.author_id],
+      media: mediaBy[post.id] || [],
+      likes: likesBy[post.id] || [],
+      comments: (commentsBy[post.id] || []).map(c => ({
+        ...c,
+        author: authors[c.author_id] || shapeAuthor({ id: c.author_id, name: 'User' })
+      }))
+    })
+  );
+}
+
+/** Single-post convenience wrapper, used after create/comment. */
+async function loadPostBundle(db, post) {
+  const [shaped] = await loadPostBundles(db, [post]);
+  return shaped;
+}
+
 module.exports = {
+  loadPostBundles,
+  loadPostBundle,
   authorFields,
   withMediaColumns,
   setMediaColumnSupport,
