@@ -262,3 +262,62 @@ describe('the guard does not break the ordinary path', () => {
     expect(buyer().subscription_plan).toBe('free');
   });
 });
+
+describe('paid plans are refused when no Razorpay keys are configured', () => {
+  /*
+   * Mock mode activates a subscription with no money moving. Locally that is
+   * the point; in production with unset keys it means every visitor can click
+   * Subscribe and receive Gold free. That was the live state of this
+   * deployment, and nothing in the code objected.
+   */
+  const auth = () => `Bearer ${jwt.sign({ id: BUYER.id }, process.env.JWT_SECRET, { expiresIn: '1h' })}`;
+
+  beforeEach(() => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+    delete process.env.ALLOW_MOCK_PAYMENTS;
+  });
+
+  it('REGRESSION: create-order refuses rather than issuing a free plan', async () => {
+    const res = await request(app()).post('/api/subscriptions/create-order')
+      .set('Authorization', auth()).send({ plan: 'gold' });
+
+    expect(res.status).toBe(503);
+    expect(res.body.paymentsAvailable).toBe(false);
+  });
+
+  it('REGRESSION: verify-payment refuses too, so a pending row cannot be cashed in', async () => {
+    // A transaction created before the block went up is still 'pending'.
+    const res = await request(app()).post('/api/subscriptions/verify-payment')
+      .set('Authorization', auth())
+      .send({ transactionId: 'txn_race_1', razorpayOrderId: ORDER_ID });
+
+    expect(res.status).toBe(503);
+    expect(db._tables.users[0].subscription_plan).toBe('free');
+  });
+
+  it('says so on /plans, so the page can disable the buttons', async () => {
+    const res = await request(app()).get('/api/subscriptions/plans');
+    expect(res.body.paymentsAvailable).toBe(false);
+  });
+
+  it('real keys re-open it with no code change', async () => {
+    process.env.RAZORPAY_KEY_ID = 'rzp_live_realkey';
+    process.env.RAZORPAY_KEY_SECRET = KEY_SECRET;
+    const res = await request(app()).get('/api/subscriptions/plans');
+    expect(res.body.paymentsAvailable).toBe(true);
+  });
+
+  it('development keeps its mock checkout', async () => {
+    process.env.NODE_ENV = 'test';
+    const res = await request(app()).get('/api/subscriptions/plans');
+    expect(res.body.paymentsAvailable).toBe(true);
+  });
+
+  it('ALLOW_MOCK_PAYMENTS re-opens it deliberately', async () => {
+    process.env.ALLOW_MOCK_PAYMENTS = 'true';
+    const res = await request(app()).get('/api/subscriptions/plans');
+    expect(res.body.paymentsAvailable).toBe(true);
+  });
+});

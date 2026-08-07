@@ -25,6 +25,29 @@ const TRIAL_DAYS = 2;
  * verification entirely — i.e. any logged-in user could grant themselves Gold.
  * Nothing the client sends is trusted here any more.
  */
+/**
+ * Whether paid plans must be refused outright.
+ *
+ * Mock mode activates a subscription without any money moving. That is correct
+ * locally and in demo mode, and catastrophic in production with no Razorpay
+ * keys configured: every visitor can click Subscribe and receive Gold free.
+ * That was the live state of this deployment -- the keys were simply never set,
+ * and nothing in the code objected.
+ *
+ * Gated on NODE_ENV rather than on the keys alone so local development and the
+ * demo backend keep their mock checkout. ALLOW_MOCK_PAYMENTS=true re-opens it
+ * in production deliberately, for a staging deploy that wants the flow without
+ * real charges -- it has to be typed out, which is the point.
+ *
+ * This turns itself off the moment real keys exist. There is no flag to
+ * remember to flip afterwards.
+ */
+function paidPlansUnavailable() {
+  return isMockMode()
+    && process.env.NODE_ENV === 'production'
+    && process.env.ALLOW_MOCK_PAYMENTS !== 'true';
+}
+
 function isMockMode() {
   const id = process.env.RAZORPAY_KEY_ID;
   const secret = process.env.RAZORPAY_KEY_SECRET;
@@ -181,7 +204,14 @@ async function emailInvoice(user, transaction, expiresAt) {
 router.get('/plans', (req, res) => {
   // Static payload — safe to cache at the edge
   res.set('Cache-Control', 'public, max-age=300, s-maxage=3600');
-  res.json({ plans: PLANS, windowOpen: isPaymentWindowOpen(), isMock: isMockMode() });
+  // paymentsAvailable lets the page disable the buttons up front rather than
+  // letting someone click through to a 503.
+  res.json({
+    plans: PLANS,
+    windowOpen: isPaymentWindowOpen(),
+    isMock: isMockMode(),
+    paymentsAvailable: !paidPlansUnavailable()
+  });
 });
 
 // POST /api/subscriptions/create-order
@@ -196,6 +226,13 @@ router.post('/create-order', protect, asyncHandler(async (req, res) => {
 
   const { plan } = req.body;
   if (!PLANS[plan]) return res.status(400).json({ message: 'Invalid plan' });
+
+  if (paidPlansUnavailable()) {
+    return res.status(503).json({
+      message: 'Payments are being set up. Paid plans are unavailable right now.',
+      paymentsAvailable: false
+    });
+  }
 
   const razorpay = getRazorpay();
   let orderId;
@@ -262,6 +299,19 @@ router.post('/verify-payment', protect, asyncHandler(async (req, res) => {
   }
   if (transaction.status === 'failed') {
     return res.status(400).json({ message: 'This transaction already failed. Start a new checkout.' });
+  }
+
+  /*
+   * Also blocked here, not only in create-order. A transaction created before
+   * the block went up is still sitting at 'pending', and without this check it
+   * could be activated afterwards -- the free plan handed out a step later in
+   * the flow.
+   */
+  if (paidPlansUnavailable()) {
+    return res.status(503).json({
+      message: 'Payments are being set up. Paid plans are unavailable right now.',
+      paymentsAvailable: false
+    });
   }
 
   // Mock mode is a server-side fact. When real keys are configured, the

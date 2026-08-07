@@ -58,8 +58,16 @@ export default function Subscriptions() {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
 
+  // Null until /plans answers, so the buttons are not briefly enabled on load.
+  const [paymentsAvailable, setPaymentsAvailable] = useState(null);
+
   useEffect(() => {
     fetchHistory();
+    axios.get('/api/subscriptions/plans')
+      .then(res => setPaymentsAvailable(res.data?.paymentsAvailable !== false))
+      // An older API has no such field. Assume available rather than hiding
+      // working buttons on a deployment that never had this problem.
+      .catch(() => setPaymentsAvailable(true));
   }, []);
 
   const fetchHistory = async () => {
@@ -251,6 +259,13 @@ export default function Subscriptions() {
               </div>
             )}
 
+            {paymentsAvailable === false && (
+              <div className="alert alert-warning" style={{ maxWidth: 560, margin: '0 auto 24px', justifyContent: 'center', textAlign: 'center' }}>
+                <AlertTriangle size={16} />
+                Payments are being set up. Paid plans are unavailable for now — the free plan works as normal.
+              </div>
+            )}
+
             {/* Plans grid */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 20, marginBottom: 32 }}>
               {PLANS.map(plan => {
@@ -301,7 +316,7 @@ export default function Subscriptions() {
                       className="btn btn-primary"
                       style={{ width: '100%', background: `linear-gradient(135deg, ${plan.color}88, ${plan.color})` }}
                       onClick={() => handleSubscribe(plan.id)}
-                      disabled={loading || plan.price === 0}
+                      disabled={loading || plan.price === 0 || paymentsAvailable === false}
                     >
                       {/* Free is never "renewable" -- it does not expire and
                           costs nothing, so offering to renew it is nonsense. */}
