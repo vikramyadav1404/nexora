@@ -55,6 +55,8 @@ export default function Subscriptions() {
   const [loading, setLoading] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [tab, setTab] = useState('plans');
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     fetchHistory();
@@ -128,6 +130,25 @@ export default function Subscriptions() {
   const currentPlan = user?.subscription?.plan || 'free';
   const expiresAt = user?.subscription?.expiresAt;
 
+  // Same arithmetic the server uses, so the confirmation and the result agree.
+  const daysLeft = expiresAt
+    ? Math.max(0, Math.ceil((new Date(expiresAt) - Date.now()) / 86400000))
+    : 0;
+
+  const handleCancel = async () => {
+    setCancelling(true);
+    try {
+      const res = await axios.post('/api/subscriptions/cancel');
+      await refreshUser();
+      setConfirmCancel(false);
+      toast.success(res.data?.message || 'Subscription cancelled');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not cancel that subscription');
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="content-wrapper" style={{ maxWidth: 1000 }}>
@@ -152,11 +173,61 @@ export default function Subscriptions() {
 
         {tab === 'plans' && (
           <>
-            {/* Current plan info */}
-            {currentPlan !== 'free' && expiresAt && (
-              <div className="alert alert-success" style={{ maxWidth: 500, margin: '0 auto 24px', justifyContent: 'center' }}>
-                <Shield size={16} />
-                Active: <strong>{currentPlan.toUpperCase()}</strong> plan · Expires {new Date(expiresAt).toLocaleDateString('en-IN')}
+            {/* Current plan info.
+                Nothing here recurs -- a payment buys 30 days and the plan ends
+                on its own. Saying so is the point: most people look for a
+                Cancel button to stop a charge that, here, is never coming. */}
+            {currentPlan !== 'free' && (
+              <div className="alert alert-success" style={{ maxWidth: 500, margin: '0 auto 24px', flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <Shield size={16} />
+                  <span>
+                    Active: <strong>{currentPlan.toUpperCase()}</strong> plan
+                    {expiresAt && <> · until {new Date(expiresAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</>}
+                  </span>
+                </div>
+
+                {!confirmCancel && (
+                  <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-sub)' }}>
+                    This does not renew automatically. Your plan simply ends on that date.
+                    {' '}
+                    <button
+                      type="button"
+                      onClick={() => setConfirmCancel(true)}
+                      style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--text-sub)', textDecoration: 'underline', cursor: 'pointer' }}
+                    >
+                      End it now
+                    </button>
+                  </div>
+                )}
+
+                {confirmCancel && (
+                  <div style={{ textAlign: 'center', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, justifyContent: 'center', textAlign: 'left' }}>
+                      <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span>
+                        {daysLeft > 0 ? (
+                          <>
+                            You have <strong>{daysLeft} day{daysLeft === 1 ? '' : 's'}</strong> left that you
+                            have already paid for. Ending now gives {daysLeft === 1 ? 'it' : 'them'} up and
+                            there is no refund. Nothing is charged either way &mdash; if you just want the
+                            billing to stop, it already has.
+                          </>
+                        ) : (
+                          <>Ending now drops you to the free plan. There is no refund.</>
+                        )}
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setConfirmCancel(false)} disabled={cancelling}>
+                        Keep my plan
+                      </button>
+                      <button className="btn btn-danger btn-sm" onClick={handleCancel} disabled={cancelling}>
+                        {cancelling ? 'Cancelling…' : 'End it now'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

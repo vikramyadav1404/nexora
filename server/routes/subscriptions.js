@@ -3,7 +3,7 @@ const router = express.Router();
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
 const { getSupabase } = require('../db/supabase');
-const { shapeTransaction } = require('../db/helpers');
+const { shapeTransaction, getActivePlan } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendEmail } = require('../utils/email');
 const { sendError, asyncHandler } = require('../utils/respond');
@@ -332,6 +332,89 @@ router.post('/webhook', async (req, res) => {
 });
 
 // GET /api/subscriptions/history
+/**
+ * POST /api/subscriptions/cancel
+ *
+ * Downgrades to free immediately, forfeiting whatever time is left.
+ *
+ * There is no recurring billing to stop. A payment buys PLAN_DAYS of access and
+ * getActivePlan() drops back to 'free' on its own once subscription_expires_at
+ * passes — nothing renews, no card is stored, and no Razorpay subscription
+ * exists. So this is not "stop charging me"; it is "end it now".
+ *
+ * That distinction is the whole reason the response reports daysForfeited and
+ * the UI says it out loud before asking for confirmation. Someone clicking
+ * Cancel usually wants to stop a future charge, and here there isn't one — they
+ * would be giving up paid days for nothing.
+ *
+ * No refund is issued. Razorpay refunds are real money movement and need a
+ * stated policy; this endpoint deliberately does not pretend to handle that.
+ */
+/*
+ * Split out from the route for the same reason activateSubscription was: the
+ * race lives between one caller's read of the user row and its write, and a
+ * test driven through the route cannot reach it — protect re-reads the user, so
+ * a second request sees 'free' and stops at the early check. Calling this twice
+ * with the same stale row is that window exactly.
+ *
+ * Returns null when another caller got there first.
+ */
+async function cancelSubscription(db, row) {
+  // getActivePlan, not the raw column: a plan whose expiry has already passed
+  // is free in every way that matters, and cancelling it is a no-op.
+  const active = getActivePlan(row);
+  if (active === 'free') return { refused: 'not_paid' };
+
+  const expiresAt = row.subscription_expires_at ? new Date(row.subscription_expires_at) : null;
+  const daysForfeited = expiresAt
+    ? Math.max(0, Math.ceil((expiresAt - Date.now()) / 86400000))
+    : 0;
+
+  /*
+   * Conditional on the plan still being what we read.
+   *
+   * Two tabs both clicking Cancel would otherwise both "succeed", and a Cancel
+   * racing a fresh purchase could wipe a plan the user just paid for. Matching
+   * on subscription_plan means only one wins.
+   */
+  const { data: changed, error } = await db.from('users').update({
+    subscription_plan: 'free',
+    subscription_expires_at: null
+  })
+    .eq('id', row.id)
+    .eq('subscription_plan', active)
+    .select('id');
+
+  if (error) throw error;
+  if (!changed || changed.length === 0) return null;
+
+  return { cancelledPlan: active, daysForfeited };
+}
+
+router.post('/cancel', protect, asyncHandler(async (req, res) => {
+  const result = await cancelSubscription(getSupabase(), req.userRow);
+
+  if (result && result.refused === 'not_paid') {
+    return res.status(400).json({ message: 'You are not on a paid plan' });
+  }
+
+  if (result === null) {
+    // Someone else got there first, or the plan changed underneath us.
+    return res.json({
+      message: 'Your subscription is already cancelled',
+      subscription: { plan: 'free', expiresAt: null },
+      daysForfeited: 0
+    });
+  }
+
+  res.json({
+    message: 'Subscription cancelled. You are back on the free plan.',
+    subscription: { plan: 'free', expiresAt: null },
+    cancelledPlan: result.cancelledPlan,
+    daysForfeited: result.daysForfeited
+  });
+}, 'Could not cancel that subscription'));
+
 router.get('/history', protect, asyncHandler(async (req, res) => {
   const { data, error } = await getSupabase()
     .from('transactions')
@@ -354,3 +437,10 @@ module.exports.isMockMode = isMockMode;
  * Calling this directly with a stale transaction is what actually exercises it.
  */
 module.exports.activateSubscription = activateSubscription;
+
+/*
+ * Same reasoning, same reason it must sit down here: module.exports is
+ * reassigned to the router above, so any property attached before that line is
+ * discarded. Adding this mid-file silently exported nothing.
+ */
+module.exports.cancelSubscription = cancelSubscription;

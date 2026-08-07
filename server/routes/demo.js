@@ -679,6 +679,33 @@ router.post('/subscriptions/verify-payment', protectDemo, (req, res) => {
   });
 });
 
+// Mirrors POST /api/subscriptions/cancel. No conditional update here: the demo
+// store is a single in-process object mutated synchronously, so there is no
+// read-then-write window for two callers to race through.
+router.post('/subscriptions/cancel', protectDemo, (req, res) => {
+  const plan = req.userRaw.subscriptionPlan || 'free';
+  const expires = req.userRaw.subscriptionExpiresAt;
+  const expired = expires && new Date() > new Date(expires);
+
+  if (plan === 'free' || expired) {
+    return res.status(400).json({ message: 'You are not on a paid plan' });
+  }
+
+  const daysForfeited = expires
+    ? Math.max(0, Math.ceil((new Date(expires) - Date.now()) / 86400000))
+    : 0;
+
+  req.userRaw.subscriptionPlan = 'free';
+  req.userRaw.subscriptionExpiresAt = null;
+
+  res.json({
+    message: 'Subscription cancelled. You are back on the free plan. (Demo)',
+    subscription: { plan: 'free', expiresAt: null },
+    cancelledPlan: plan,
+    daysForfeited
+  });
+});
+
 // ── Notifications ───────────────────────────────────────────
 router.get('/notifications', protectDemo, async (req, res) => {
   await initDemoStore();
