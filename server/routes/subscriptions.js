@@ -68,15 +68,41 @@ function verifySignature(orderId, paymentId, signature) {
 }
 
 /** Marks a transaction paid and activates the plan recorded ON THAT ROW. */
+/**
+ * Flip a pending transaction to success and extend the subscription.
+ *
+ * Returns null when the transaction was already claimed by someone else.
+ *
+ * Both callers -- the browser hitting /verify-payment and Razorpay hitting the
+ * webhook -- read the transaction, check its status, and then write. Those are
+ * separate statements, so both can pass the check before either writes. The
+ * update below is what closes that: `.eq('status', 'pending')` means only one
+ * of them matches a row, and the loser is told so by getting none back.
+ *
+ * Without it the second caller would activate again and send a second invoice.
+ * It could not double the subscription -- expiresAt is computed as now +
+ * PLAN_DAYS, an absolute value rather than an increment -- but two invoices for
+ * one payment is its own problem.
+ */
 async function activateSubscription(db, transaction, { paymentId, signature }) {
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + PLAN_DAYS);
 
-  await db.from('transactions').update({
+  const { data: claimed, error: claimErr } = await db.from('transactions').update({
     status: 'success',
     razorpay_payment_id: paymentId || '',
     razorpay_signature: signature || ''
-  }).eq('id', transaction.id);
+  })
+    .eq('id', transaction.id)
+    // The guard. Matches nothing if another caller already flipped it.
+    .eq('status', 'pending')
+    .select('id');
+
+  if (claimErr) throw claimErr;
+
+  // Lost the race. The winner has already activated and emailed; doing either
+  // again is exactly what this exists to prevent.
+  if (!claimed || claimed.length === 0) return null;
 
   const { data: user, error } = await db.from('users').update({
     // plan comes from the stored transaction, never from the request body
@@ -205,10 +231,25 @@ router.post('/verify-payment', protect, asyncHandler(async (req, res) => {
     }
   }
 
-  const { user, expiresAt } = await activateSubscription(db, transaction, {
+  const activated = await activateSubscription(db, transaction, {
     paymentId: razorpayPaymentId || 'mock_payment',
     signature: razorpaySignature || ''
   });
+
+  /*
+   * The webhook got there first, in the window between the status check above
+   * and this write. Nothing is wrong from the caller's point of view -- the
+   * subscription is active -- so this answers exactly as the already-verified
+   * branch does rather than inventing an error for a payment that worked.
+   */
+  if (!activated) {
+    return res.json({
+      message: 'Payment already verified',
+      subscription: { plan: transaction.plan }
+    });
+  }
+
+  const { user, expiresAt } = activated;
 
   await emailInvoice(user, transaction, expiresAt);
 
@@ -274,10 +315,15 @@ router.post('/webhook', async (req, res) => {
 
     if (!transaction || transaction.status === 'success') return;
 
-    const { user, expiresAt } = await activateSubscription(db, transaction, {
+    const activated = await activateSubscription(db, transaction, {
       paymentId: payment.id || '',
       signature: 'webhook'
     });
+
+    // The browser callback won the race. It has already activated and emailed.
+    if (!activated) return;
+
+    const { user, expiresAt } = activated;
     await emailInvoice(user, transaction, expiresAt);
     console.log(`[webhook] activated ${transaction.plan} for user ${transaction.user_id}`);
   } catch (err) {
@@ -301,3 +347,10 @@ router.get('/history', protect, asyncHandler(async (req, res) => {
 // isMockMode rides along as a property for the tests and the cron sweep.
 module.exports = router;
 module.exports.isMockMode = isMockMode;
+/*
+ * Exported for tests. The race this guards cannot be reproduced through the
+ * routes: both callers re-read the transaction first, so the second one hits
+ * the already-verified early return and the conditional update never fires.
+ * Calling this directly with a stale transaction is what actually exercises it.
+ */
+module.exports.activateSubscription = activateSubscription;
