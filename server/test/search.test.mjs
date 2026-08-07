@@ -24,8 +24,8 @@ const { __setTestClient } = require('../db/supabase.js');
 const jwt = require('jsonwebtoken');
 
 const ME = { id: '00000000-0000-4000-8000-0000000000e1', name: 'Me', email: 'me@nexora.test', is_active: true };
-const ALICE = { id: '00000000-0000-4000-8000-0000000000e2', name: 'Alice Anderson', email: 'alice@nexora.test', is_active: true, points: 10, badges: [] };
-const BOB = { id: '00000000-0000-4000-8000-0000000000e3', name: 'Bob Baker', email: 'bob@nexora.test', is_active: true, points: 5, badges: [] };
+const ALICE = { id: '00000000-0000-4000-8000-0000000000e2', name: 'Alice Anderson', email: 'alice@nexora.test', is_active: true, avatar: '', points: 10, badges: [] };
+const BOB = { id: '00000000-0000-4000-8000-0000000000e3', name: 'Bob Baker', email: 'bob@nexora.test', is_active: true, avatar: '', points: 5, badges: [] };
 
 /** Object.keys().sort() order — 'query' precedes 'questions' ('quer' < 'ques'). */
 const SHAPE_KEYS = ['people', 'posts', 'query', 'questions', 'spaces'];
@@ -43,6 +43,7 @@ function app() {
   const a = express();
   a.use(express.json());
   a.use('/api/search', require('../routes/search.js'));
+  a.use('/api/users', require('../routes/users.js'));
   return a;
 }
 
@@ -207,5 +208,104 @@ describe('hostile input', () => {
       expect(c.args.p_limit).toBeLessThanOrEqual(50);
       expect(c.args.p_limit).toBeGreaterThan(0);
     }
+  });
+});
+
+/* ────────────────────────────────────────────────────────────
+ * GET /api/users/search — the people search behind Settings → Find People
+ *
+ * Same seam as /api/search: search_people returns seven columns, the response
+ * needs email and avatar_thumb_url, so the RPC ranks and a second query
+ * fetches. The reorder afterwards is the part that is easy to lose.
+ * ──────────────────────────────────────────────────────────── */
+const findPeople = (q) =>
+  request(app()).get('/api/users/search').query({ q }).set('Authorization', `Bearer ${token()}`);
+
+describe('people search', () => {
+  it('returns the shape Settings.jsx reads', async () => {
+    ranked.people = [{ id: ALICE.id, rank: 0.8 }];
+    const res = await findPeople('alice');
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body)).toEqual(['users']);
+    expect(Object.keys(res.body.users[0]).sort()).toEqual(
+      ['_id', 'avatar', 'avatarThumbUrl', 'avatarUrl', 'badges', 'email', 'id', 'name', 'points']
+    );
+  });
+
+  it('uses the ranked function, not ILIKE', async () => {
+    ranked.people = [{ id: ALICE.id, rank: 0.5 }];
+    await findPeople('alice');
+    expect(rpcCalls.map(c => c.name)).toContain('search_people');
+  });
+
+  it('REGRESSION: results come back in rank order, not database order', async () => {
+    ranked.people = [
+      { id: BOB.id, rank: 0.9 },
+      { id: ALICE.id, rank: 0.4 }
+    ];
+    const res = await findPeople('ba');
+    expect(res.body.users.map(u => u.name)).toEqual(['Bob Baker', 'Alice Anderson']);
+  });
+
+  it('REGRESSION: passes the viewer so self and blocked are excluded', async () => {
+    // search_people filters is_active, u.id <> p_viewer and the blocks
+    // subquery. The route this replaced filtered only the viewer's own id, so
+    // a blocked account still appeared. Sending the wrong viewer, or none,
+    // silently restores that.
+    ranked.people = [{ id: ALICE.id, rank: 0.5 }];
+    await findPeople('alice');
+    const call = rpcCalls.find(c => c.name === 'search_people');
+    expect(call.args.p_viewer).toBe(ME.id);
+  });
+
+  it('drops a ranked id whose row has since been deleted', async () => {
+    ranked.people = [
+      { id: 'deadbeef-0000-4000-8000-000000000000', rank: 1 },
+      { id: ALICE.id, rank: 0.5 }
+    ];
+    const res = await findPeople('alice');
+    expect(res.body.users.map(u => u.name)).toEqual(['Alice Anderson']);
+  });
+
+  it('short queries return empty without calling the RPC', async () => {
+    const res = await findPeople('a');
+    expect(res.body).toEqual({ users: [] });
+    expect(rpcCalls).toHaveLength(0);
+  });
+
+  it('returns empty when nothing ranks', async () => {
+    ranked.people = [];
+    const res = await findPeople('zzzzzz');
+    expect(res.status).toBe(200);
+    expect(res.body.users).toEqual([]);
+  });
+
+  it('falls back to ILIKE when migration 007 is absent', async () => {
+    rpcMissing = true;
+    const res = await findPeople('alice');
+    expect(res.status).toBe(200);
+    expect(res.body.users.map(u => u.name)).toContain('Alice Anderson');
+    expect(Object.keys(res.body)).toEqual(['users']);
+  });
+
+  it('excludes the viewer on the fallback path too', async () => {
+    rpcMissing = true;
+    const res = await findPeople('me');
+    expect(res.body.users.map(u => u.id)).not.toContain(ME.id);
+  });
+
+  it('survives hostile input', async () => {
+    ranked.people = [];
+    for (const q of ['a,role.eq.admin', 'a.b(c)', "a'or'1'='1", 'a%_', 'a)(b']) {
+      const res = await findPeople(q);
+      expect(res.status).toBe(200);
+      expect(Object.keys(res.body)).toEqual(['users']);
+    }
+  });
+
+  it('rejects an unauthenticated request', async () => {
+    const res = await request(app()).get('/api/users/search').query({ q: 'alice' });
+    expect(res.status).toBe(401);
   });
 });

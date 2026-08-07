@@ -32,29 +32,101 @@ async function getUsersByIds(db, ids) {
   }));
 }
 
-// GET /api/users/search?q=
+const PEOPLE_SEARCH_LIMIT = 10;
+const PEOPLE_FIELDS = 'id, name, avatar, email, points, badges';
+
+// Warn once, not per request, if migration 007 has not been run.
+let peopleRpcWarned = false;
+
+/** The response shape Settings.jsx reads. Unchanged by the move to ranking. */
+const shapeResult = (u) => ({
+  _id: u.id,
+  id: u.id,
+  name: u.name,
+  avatar: u.avatar,
+  avatarUrl: u.avatar,
+  avatarThumbUrl: u.avatar_thumb_url || u.avatar,
+  email: u.email,
+  points: u.points,
+  badges: u.badges || []
+});
+
+/**
+ * GET /api/users/search?q=
+ *
+ * Ranked by trigram similarity through search_people (migration 007), which
+ * also filters is_active, the viewer themselves, and anyone the viewer has
+ * blocked. That last one is new — the ILIKE query this replaced filtered only
+ * the viewer's own id, so a blocked account still showed up here.
+ *
+ * It also no longer matches on email. The old query did, which let anyone
+ * confirm whether an address had an account by typing it into a search box.
+ * That is the same account-enumeration surface forgot-password was changed to
+ * close, and keeping it here would have contradicted that.
+ */
 router.get('/search', protect, asyncHandler(async (req, res) => {
-  // Raw `q` used to be interpolated straight into the PostgREST .or() filter,
-  // so a comma or dot in the query could inject extra filter terms.
+  // Still escaped: the fallback path below interpolates into a PostgREST
+  // filter string, where a comma or dot would inject extra filter terms. On
+  // the ranked path the query is a bound RPC argument and this costs nothing.
   const q = escapePostgrestValue(req.query.q);
   if (!q || q.length < 2) return res.json({ users: [] });
 
   const db = getSupabase();
+
+  const ranked = await db.rpc('search_people', {
+    p_query: q,
+    p_viewer: req.user.id,
+    p_limit: PEOPLE_SEARCH_LIMIT
+  });
+
+  const rpcMissing =
+    ranked.error &&
+    (ranked.error.code === 'PGRST202' || /find the function/i.test(ranked.error.message || ''));
+
+  if (!rpcMissing) {
+    if (ranked.error) throw ranked.error;
+
+    /*
+     * search_people returns seven columns; the response needs email and
+     * avatar_thumb_url, which are not among them. So the RPC decides the order
+     * and a second query fetches the rows — and they must be put back into
+     * rank order afterwards, because .in() returns them in whatever order
+     * Postgres finds them and the ranking would otherwise be discarded.
+     */
+    const ids = (ranked.data || []).map(u => u.id);
+    if (!ids.length) return res.json({ users: [] });
+
+    const { data, error } = await db
+      .from('users')
+      .select(withMediaColumns(PEOPLE_FIELDS))
+      .in('id', ids);
+
+    if (error) throw error;
+
+    const byId = Object.fromEntries((data || []).map(u => [u.id, u]));
+    return res.json({
+      users: ids.map(id => byId[id]).filter(Boolean).map(shapeResult)
+    });
+  }
+
+  if (!peopleRpcWarned) {
+    peopleRpcWarned = true;
+    console.warn(
+      'search_people unavailable; serving unranked ILIKE people search. ' +
+      'Run server/db/migrations/007_search.sql to enable ranking.'
+    );
+  }
+
+  // Pre-007 behaviour, kept so a database without the function still works.
   const { data, error } = await db
     .from('users')
-    .select(withMediaColumns('id, name, avatar, email, points, badges'))
+    .select(withMediaColumns(PEOPLE_FIELDS))
     .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
     .neq('id', req.user.id)
-    .limit(10);
+    .limit(PEOPLE_SEARCH_LIMIT);
 
   if (error) throw error;
-  res.json({
-    users: (data || []).map(u => ({
-      _id: u.id, id: u.id, name: u.name, avatar: u.avatar,
-      avatarUrl: u.avatar, avatarThumbUrl: u.avatar_thumb_url || u.avatar,
-      email: u.email, points: u.points, badges: u.badges || []
-    }))
-  });
+  res.json({ users: (data || []).map(shapeResult) });
 }, "Could not complete that request"));
 
 // GET /api/users/interests/catalog
