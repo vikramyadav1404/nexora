@@ -669,13 +669,50 @@ router.post('/subscriptions/create-order', protectDemo, (req, res) => {
 });
 
 router.post('/subscriptions/verify-payment', protectDemo, (req, res) => {
-  req.userRaw.subscriptionPlan = req.body.plan || 'bronze';
-  const expires = new Date();
+  const plan = req.body.plan || 'bronze';
+
+  // Stack onto whatever is left, matching the real activateSubscription:
+  // renewing the same plan adds days, switching plans starts fresh.
+  const current = req.userRaw.subscriptionExpiresAt;
+  const samePlan = (req.userRaw.subscriptionPlan || 'free') === plan
+    && current && new Date() < new Date(current);
+  const expires = new Date(samePlan ? current : Date.now());
   expires.setDate(expires.getDate() + 30);
+
+  req.userRaw.subscriptionPlan = plan;
   req.userRaw.subscriptionExpiresAt = expires.toISOString();
   res.json({
     message: 'Payment verified! Subscription activated. (Demo)',
     subscription: { plan: req.userRaw.subscriptionPlan, expiresAt: req.userRaw.subscriptionExpiresAt }
+  });
+});
+
+// Mirrors POST /api/subscriptions/trial. Once per demo account, same as real.
+router.post('/subscriptions/trial', protectDemo, (req, res) => {
+  const plan = String(req.body?.plan || '').toLowerCase();
+  if (!['bronze', 'silver', 'gold'].includes(plan)) {
+    return res.status(400).json({ message: 'Unknown plan' });
+  }
+  if (req.userRaw.trialUsedAt) {
+    return res.status(400).json({ message: 'You have already used your free trial' });
+  }
+
+  const expires = req.userRaw.subscriptionExpiresAt;
+  if ((req.userRaw.subscriptionPlan || 'free') !== 'free' && expires && new Date() < new Date(expires)) {
+    return res.status(400).json({ message: 'You already have an active plan' });
+  }
+
+  const until = new Date();
+  until.setDate(until.getDate() + 2);
+  req.userRaw.subscriptionPlan = plan;
+  req.userRaw.subscriptionExpiresAt = until.toISOString();
+  req.userRaw.trialUsedAt = new Date().toISOString();
+
+  res.json({
+    message: `Your ${plan} trial has started. It runs for 2 days. (Demo)`,
+    subscription: { plan, expiresAt: until.toISOString() },
+    trialDays: 2,
+    isTrial: true
   });
 });
 

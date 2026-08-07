@@ -141,7 +141,10 @@ function shapeUser(row, extras = {}) {
     subscription: {
       plan: safe.subscription_plan || 'free',
       expiresAt: safe.subscription_expires_at || null,
-      razorpaySubscriptionId: safe.razorpay_subscription_id || ''
+      razorpaySubscriptionId: safe.razorpay_subscription_id || '',
+      // Undefined until migration 014 is applied, which reads as "eligible" --
+      // the same answer every existing account should get anyway.
+      trialUsedAt: safe.trial_used_at || null
     },
     questionsToday: safe.questions_today || 0,
     lastQuestionDate: safe.last_question_date || null,

@@ -1,0 +1,49 @@
+-- ============================================================
+-- NEXORA 014 — a two-day trial, once per account
+-- Run after 013_payment_idempotency.sql. Safe to re-run.
+-- ============================================================
+--
+-- One column. It records when an account started its trial, and it is the only
+-- thing standing between "try it for two days" and "free forever".
+--
+-- Without it there is no way to tell a first-time trial from the two hundredth.
+-- subscription_plan cannot answer the question: a trial that has ended leaves
+-- the user on 'free', which is indistinguishable from someone who never tried.
+-- Cancelling mid-trial has the same effect. So the fact has to be stored
+-- separately from the subscription state, and it must never be cleared --
+-- not by cancelling, not by expiry, not by paying.
+--
+-- NULL means "has never trialled". Any timestamp means "has", regardless of
+-- what happened afterwards. There is deliberately no 'trial_active' flag: that
+-- would be a second source of truth for something subscription_expires_at
+-- already answers, and the two would drift.
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_used_at TIMESTAMPTZ;
+
+-- ------------------------------------------------------------
+-- Why no index
+-- ------------------------------------------------------------
+-- This column is only ever read for a single user, by primary key, on the row
+-- the request already loaded. There is no query that filters or sorts by it, so
+-- an index would be write cost for nothing. Add one only if a report over
+-- trial conversion ever needs it.
+
+-- ============================================================
+-- Reversibility
+-- ============================================================
+-- Additive and idempotent. No existing column is altered and no row is
+-- rewritten -- adding a nullable column with no default is a catalogue-only
+-- change in Postgres, so it does not rewrite the table and is safe on a live
+-- database.
+--
+-- Existing users all get NULL, which reads as "never trialled". That is the
+-- intended outcome: everyone who already has an account is eligible.
+--
+-- To undo:
+--
+--   ALTER TABLE users DROP COLUMN IF EXISTS trial_used_at;
+--
+-- Dropping it makes every account eligible for a trial again, including
+-- accounts that already used one. The application treats a missing column as
+-- "eligible", so it degrades open, not closed -- worth knowing before dropping
+-- it on a live system.

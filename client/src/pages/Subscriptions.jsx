@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import axios from '../services/api';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
-import { Check, Zap, Shield, AlertTriangle, Receipt } from 'lucide-react';
+import { Check, Zap, Shield, AlertTriangle, Receipt, RefreshCw, Gift } from 'lucide-react';
 
 function loadRazorpayScript() {
   return new Promise((resolve, reject) => {
@@ -71,7 +71,9 @@ export default function Subscriptions() {
 
   const handleSubscribe = async (planId) => {
     if (planId === 'free') { toast('You are already on the Free plan'); return; }
-    if (user?.subscription?.plan === planId) { toast('You are already on this plan!'); return; }
+    // Buying the plan you are already on is a renewal, not a mistake. The
+    // server adds the days onto whatever is left rather than resetting, so
+    // nothing is lost by renewing early -- this used to be refused outright.
 
     // Payment window no longer blocks subscribe (always open unless server enforces it)
 
@@ -134,6 +136,24 @@ export default function Subscriptions() {
   const daysLeft = expiresAt
     ? Math.max(0, Math.ceil((new Date(expiresAt) - Date.now()) / 86400000))
     : 0;
+
+  // trialUsedAt is undefined until migration 014 lands, which reads as eligible
+  // -- the same answer every existing account should get anyway.
+  const trialUsed = !!user?.subscription?.trialUsedAt;
+  const canTrial = currentPlan === 'free' && !trialUsed;
+
+  const handleTrial = async (planId) => {
+    setLoading(true);
+    try {
+      const res = await axios.post('/api/subscriptions/trial', { plan: planId });
+      await refreshUser();
+      toast.success(res.data?.message || 'Trial started');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Could not start that trial');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleCancel = async () => {
     setCancelling(true);
@@ -273,14 +293,31 @@ export default function Subscriptions() {
                       ))}
                     </ul>
 
+                    {/* Renewing the plan you are on used to be refused. It is
+                        now the main action for a current plan: the server adds
+                        the days onto whatever is left, so renewing early costs
+                        nothing. */}
                     <button
-                      className={`btn ${isCurrent ? 'btn-secondary' : 'btn-primary'}`}
-                      style={{ width: '100%', ...(isCurrent ? {} : { background: `linear-gradient(135deg, ${plan.color}88, ${plan.color})` }) }}
+                      className="btn btn-primary"
+                      style={{ width: '100%', background: `linear-gradient(135deg, ${plan.color}88, ${plan.color})` }}
                       onClick={() => handleSubscribe(plan.id)}
-                      disabled={loading || isCurrent}
+                      disabled={loading || plan.price === 0}
                     >
-                      {isCurrent ? <><Check size={15} /> Current Plan</> : <><Zap size={15} /> {plan.price === 0 ? 'Downgrade' : 'Subscribe'}</>}
+                      {isCurrent
+                        ? <><RefreshCw size={15} /> Renew for 30 days</>
+                        : <><Zap size={15} /> {plan.price === 0 ? 'Free plan' : 'Subscribe'}</>}
                     </button>
+
+                    {canTrial && plan.price > 0 && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ width: '100%', marginTop: 8 }}
+                        onClick={() => handleTrial(plan.id)}
+                        disabled={loading}
+                      >
+                        <Gift size={14} /> Try free for 2 days
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -288,7 +325,10 @@ export default function Subscriptions() {
 
             <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
               <AlertTriangle size={14} style={{ display: 'inline', marginRight: 4 }} />
-              Subscriptions auto-expire after 30 days. Invoice sent to your email after payment.
+              Plans last 30 days and end on their own — nothing renews automatically and no card is stored.
+              Renewing early is safe: the days are added to whatever is left, never replaced.
+              {canTrial && ' The free trial runs for 2 days and can be used once.'}
+              {' '}Invoice sent to your email after payment.
             </div>
           </>
         )}

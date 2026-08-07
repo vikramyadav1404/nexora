@@ -15,6 +15,7 @@ const PLANS = {
 };
 
 const PLAN_DAYS = 30;
+const TRIAL_DAYS = 2;
 
 /**
  * Whether real Razorpay credentials are configured.
@@ -84,10 +85,35 @@ function verifySignature(orderId, paymentId, signature) {
  * PLAN_DAYS, an absolute value rather than an increment -- but two invoices for
  * one payment is its own problem.
  */
-async function activateSubscription(db, transaction, { paymentId, signature }) {
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + PLAN_DAYS);
+/**
+ * Where a payment's PLAN_DAYS are added on from.
+ *
+ * Renewing must not throw away time already paid for. Someone with 10 days
+ * left who buys another month should end up with 40 days, not 30 — the old
+ * behaviour computed `now + PLAN_DAYS` flat and silently ate the remainder.
+ *
+ * Note what this gives up. That flat value was load-bearing: it meant a double
+ * activation could not extend anything, because writing `now + 30` twice lands
+ * on the same date. Adding to the existing expiry removes that safety net, so a
+ * double activation would now genuinely hand out 60 days.
+ *
+ * That is only acceptable because activateSubscription already refuses to run
+ * twice — the .eq('status', 'pending') claim below, plus the unique index on
+ * razorpay_payment_id from migration 013. This function is why those two matter
+ * more than they did yesterday, and why the concurrency tests must keep passing.
+ *
+ * An expiry in the past is ignored: a lapsed subscription starts from today,
+ * not from whenever it ran out.
+ */
+function extendFrom(currentExpiry, days) {
+  const now = Date.now();
+  const base = currentExpiry ? new Date(currentExpiry).getTime() : now;
+  const start = new Date(Math.max(now, base));
+  start.setDate(start.getDate() + days);
+  return start;
+}
 
+async function activateSubscription(db, transaction, { paymentId, signature }) {
   const { data: claimed, error: claimErr } = await db.from('transactions').update({
     status: 'success',
     razorpay_payment_id: paymentId || '',
@@ -103,6 +129,25 @@ async function activateSubscription(db, transaction, { paymentId, signature }) {
   // Lost the race. The winner has already activated and emailed; doing either
   // again is exactly what this exists to prevent.
   if (!claimed || claimed.length === 0) return null;
+
+  /*
+   * Read the current expiry only after winning the claim above, so this cannot
+   * run twice for one payment.
+   *
+   * Time stacks only when renewing the same plan. Buying a different plan
+   * starts a fresh PLAN_DAYS from today — that is a switch, not a renewal, and
+   * carrying the remainder across tiers means 10 days of Gold could be turned
+   * into 10 extra days of Bronze.
+   */
+  const { data: before, error: readErr } = await db.from('users')
+    .select('subscription_plan, subscription_expires_at')
+    .eq('id', transaction.user_id)
+    .single();
+
+  if (readErr) throw readErr;
+
+  const renewingSamePlan = getActivePlan(before) === transaction.plan;
+  const expiresAt = extendFrom(renewingSamePlan ? before.subscription_expires_at : null, PLAN_DAYS);
 
   const { data: user, error } = await db.from('users').update({
     // plan comes from the stored transaction, never from the request body
@@ -350,6 +395,111 @@ router.post('/webhook', async (req, res) => {
  * No refund is issued. Razorpay refunds are real money movement and need a
  * stated policy; this endpoint deliberately does not pretend to handle that.
  */
+/**
+ * POST /api/subscriptions/trial
+ *
+ * Two free days of a paid plan. Once per account, ever.
+ *
+ * No payment and no card, because there is nowhere to store one — so nothing
+ * converts automatically when the two days run out. The trial simply expires
+ * and the user is back on free, exactly as a paid plan does. If they want to
+ * continue they pay, deliberately, through the normal checkout.
+ *
+ * "Once, ever" is carried by users.trial_used_at (migration 014) rather than by
+ * subscription state, because subscription state cannot answer it: an expired
+ * trial leaves the user on 'free', which looks identical to someone who never
+ * trialled. Cancelling mid-trial looks identical too. The column is never
+ * cleared — not by cancelling, not by expiry, not by paying.
+ */
+/*
+ * Split out for the same reason as cancelSubscription: protect re-reads the
+ * user, so a second request through the route sees the stamp and stops at the
+ * early check — the conditional write below is unreachable from there, and a
+ * test driven through the route passes with it deleted. Calling this twice with
+ * one stale row is the actual window.
+ *
+ * Returns { refused } for a rule, null for a lost race, or the granted expiry.
+ */
+async function startTrialFor(db, row, plan) {
+  if (!PLANS[plan]) return { refused: 'unknown_plan' };
+
+  // Starting a trial on top of a plan they are paying for would replace paid
+  // time with free time -- strictly worse for them, so refuse it.
+  if (getActivePlan(row) !== 'free') return { refused: 'active_plan' };
+
+  /*
+   * No early `if (row.trial_used_at)` check here on purpose.
+   *
+   * There was one, and deleting it failed no test -- because the conditional
+   * write below already refuses, returns null, and the route maps that to the
+   * same "already used your free trial" response. It was a second branch
+   * producing an identical outcome, so it could never be proven by a test and
+   * could drift from the real guard. The write is the single source of truth.
+   */
+
+  const expiresAt = extendFrom(null, TRIAL_DAYS);
+
+  /*
+   * .is('trial_used_at', null) is the guard, and it is the whole feature.
+   *
+   * Two requests arriving together both read a null trial_used_at and both
+   * decide the account is eligible. Without a condition on the write, both
+   * succeed and the second silently grants another two days -- repeat and the
+   * trial is unlimited. Matching on null means exactly one write lands.
+   */
+  const { data: claimed, error } = await db.from('users').update({
+    subscription_plan: plan,
+    subscription_expires_at: expiresAt.toISOString(),
+    trial_used_at: new Date().toISOString()
+  })
+    .eq('id', row.id)
+    .is('trial_used_at', null)
+    .select('id');
+
+  /*
+   * PGRST204 means trial_used_at does not exist yet -- migration 014 has not
+   * been applied to this database. Without this branch the route 500s and the
+   * user is told nothing useful. "Not available" is true, and it keeps
+   * deploying the code before the migration harmless rather than broken.
+   */
+  if (error) {
+    if (error.code === 'PGRST204') return { refused: 'no_column' };
+    throw error;
+  }
+
+  if (!claimed || claimed.length === 0) return null;
+  return { expiresAt };
+}
+
+router.post('/trial', protect, asyncHandler(async (req, res) => {
+  const plan = String(req.body?.plan || '').toLowerCase();
+  const result = await startTrialFor(getSupabase(), req.userRow, plan);
+
+  const refusals = {
+    unknown_plan: [400, 'Unknown plan'],
+    already_used: [400, 'You have already used your free trial'],
+    active_plan: [400, 'You already have an active plan'],
+    no_column: [503, 'Free trials are not available yet']
+  };
+
+  if (result && result.refused) {
+    const [status, message] = refusals[result.refused];
+    return res.status(status).json({ message });
+  }
+
+  // Lost the race against a simultaneous request from the same account.
+  if (result === null) {
+    return res.status(400).json({ message: 'You have already used your free trial' });
+  }
+
+  res.json({
+    message: `Your ${PLANS[plan].name} trial has started. It runs for ${TRIAL_DAYS} days.`,
+    subscription: { plan, expiresAt: result.expiresAt.toISOString() },
+    trialDays: TRIAL_DAYS,
+    isTrial: true
+  });
+}, 'Could not start that trial'));
+
 /*
  * Split out from the route for the same reason activateSubscription was: the
  * race lives between one caller's read of the user row and its write, and a
@@ -444,3 +594,10 @@ module.exports.activateSubscription = activateSubscription;
  * discarded. Adding this mid-file silently exported nothing.
  */
 module.exports.cancelSubscription = cancelSubscription;
+module.exports.startTrialFor = startTrialFor;
+
+// extendFrom is exported to be unit-tested directly. Its Math.max branch is not
+// reachable through activateSubscription -- a past expiry means getActivePlan
+// returns 'free', so the caller passes null rather than the stale date -- and
+// untestable code that claims to handle a case is worse than no code at all.
+module.exports.extendFrom = extendFrom;
