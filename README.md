@@ -55,9 +55,9 @@ The whole API is one serverless handler — `server/vercel.json` routes `/(.*)` 
 | Auth | `jsonwebtoken`, `bcryptjs` (cost 12), TOTP implemented against `node:crypto` |
 | Media | `sharp` server-side, `multer` memory storage, Supabase Storage buckets |
 | Optional services | Razorpay, Anthropic SDK, Nodemailer, Sentry (raw HTTP, no SDK) |
-| Tests | Vitest + Supertest, 209 tests across 13 files, no database required |
+| Tests | Vitest + Supertest, 262 tests across 16 files, no database required |
 
-**Counted from the code:** 93 REST endpoints across 18 route modules, plus a separate 57-endpoint in-memory mirror for demo mode. 22 pages, 19 of them lazy-loaded. 10 shared UI primitives, 8 custom hooks.
+**Counted from the code:** 94 REST endpoints across 18 route modules, plus a separate 59-endpoint in-memory mirror for demo mode. 22 pages, 19 of them lazy-loaded. 10 shared UI primitives, 8 custom hooks.
 
 ---
 
@@ -97,6 +97,44 @@ Transferring points was a read-modify-write across two `users` rows. Two concurr
 
 **Trade-off.** Business rules — the minimum balance floor, the self-transfer rejection — now live in SQL, where they are invisible to anyone reading the route. The route falls back to a non-atomic JS path if the function is missing, which is a correctness compromise made deliberately so a partially-migrated database still works.
 
+### Subscriptions do not recur, and renewal stacking made that a trade-off
+
+There is no recurring billing. A payment buys 30 days, no card is stored, and no
+Razorpay subscription object exists — `getActivePlan()` in `db/helpers.js` simply
+returns `free` once `subscription_expires_at` passes. Every subscription cancels
+itself, so the plans page says so in as many words rather than offering a Cancel
+button that implies a charge is coming.
+
+`POST /subscriptions/cancel` exists anyway, for ending a plan early. It reports
+`daysForfeited` because that is what the action actually costs: cancelling on day
+2 of 30 gives up 28 paid days and there is no refund. Refunds are out of scope —
+that is real money movement and needs a stated policy.
+
+Renewal is where the interesting trade-off is. Activation used to compute
+`now + PLAN_DAYS` flat, which silently discarded any remaining time; renewing on
+day 20 lost 10 days, and the UI refused the action outright rather than fixing
+it. Time now stacks from the existing expiry.
+
+That flat value was load-bearing, though. Writing the same date twice lands on
+the same date, so a double activation could not extend anything — the arithmetic
+was itself an idempotency guarantee. Stacking removes it: one payment counted
+twice would now hand out 60 days. This is only safe because activation already
+refuses to run twice, via the `.eq('status', 'pending')` conditional claim and
+migration 013's partial unique index on `razorpay_payment_id`. Those guards
+carry more weight than they appear to, and
+`test/subscriptionTrial.test.mjs` asserts the specific outcome: two callers, one
+payment, 40 days rather than 70.
+
+Switching plans deliberately does not stack — 10 days of Gold must not become 10
+extra days of Bronze — so a different plan starts a fresh 30 days from today.
+
+The 2-day trial needs its own column (`users.trial_used_at`, migration 014)
+because subscription state cannot answer "has this account trialled before". An
+expired trial leaves the user on `free`, which is indistinguishable from someone
+who never trialled, and cancelling mid-trial looks the same again. The column is
+never cleared, and the write is conditional on it being null so two simultaneous
+requests cannot both grant a trial.
+
 ### Rate limiting in Postgres, and what that forces elsewhere
 
 `server/middleware/rateLimit.js`
@@ -123,7 +161,7 @@ What that does not prevent is the object landing in the bucket in the first plac
 
 `server/routes/demo.js`, `server/db/demoStore.js`
 
-With `DEMO_MODE=true`, `index.js` mounts an entirely separate router backed by an in-memory store — 57 endpoints mirroring the real surface, same paths, same response shapes, seeded with content. The client cannot tell the difference, and the app runs with no database at all.
+With `DEMO_MODE=true`, `index.js` mounts an entirely separate router backed by an in-memory store — 59 endpoints mirroring the real surface, same paths, same response shapes, seeded with content. The client cannot tell the difference, and the app runs with no database at all.
 
 **Trade-off.** It is a genuine second implementation, roughly 1,400 lines, and nothing structurally keeps it in step with the real routes. It has drifted before. It earns its place by making the project runnable in about thirty seconds by someone who will not create a Supabase project, and by giving tests a target that needs no network.
 
@@ -176,7 +214,7 @@ npm run dev            # root: api + client
 npm run check          # root: lint + client build
 
 cd server
-npm test               # 176 tests, no database needed
+npm test               # 262 tests, no database needed
 npm run migration:runner -- 005 006   # build a paste-ready SQL file
 npm run backup         # dump every table to backups/*.json
 npm run smoke          # hit /api/ready and /api/health
@@ -189,7 +227,7 @@ npm run lint           # oxlint
 
 ## API surface
 
-93 endpoints across 18 modules, all under `/api`. Roughly:
+94 endpoints across 18 modules, all under `/api`. Roughly:
 
 | Group | Count | Covers |
 |---|---|---|
@@ -202,7 +240,7 @@ npm run lint           # oxlint
 | `challenges` · `spaces` | 2 each | weekly goals; the 16 interest communities |
 | `digests` · `search` · `uploads` | 1 each | weekly digest; global search; signed upload tickets |
 
-A separate 57-endpoint mirror in `server/routes/demo.js` shadows this surface when `DEMO_MODE=true`.
+A separate 59-endpoint mirror in `server/routes/demo.js` shadows this surface when `DEMO_MODE=true`.
 
 ---
 
@@ -212,7 +250,7 @@ A separate 57-endpoint mirror in `server/routes/demo.js` shadows this surface wh
 cd server && npm test
 ```
 
-209 tests, 13 files, no database — the suite injects a fake PostgREST client (`server/test/helpers/fakeSupabase.js`) that also stubs Storage. Coverage is weighted toward things that are expensive to get wrong rather than toward line count:
+262 tests, 16 files, no database — the suite injects a fake PostgREST client (`server/test/helpers/fakeSupabase.js`) that also stubs Storage. Coverage is weighted toward things that are expensive to get wrong rather than toward line count:
 
 - **Payments** — a regression test replays the privilege-escalation attack that used to work (a client-supplied `isMock` flag skipping signature verification) and asserts it now fails.
 - **Two-factor** — all six RFC 6238 vectors including `T=20000000000`, which catches a counter written as 32-bit; replay of a code inside its own 30-second window; the per-account lockout.
