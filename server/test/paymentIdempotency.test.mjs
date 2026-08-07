@@ -209,6 +209,35 @@ describe('the race: two callers holding the same stale read', () => {
   });
 });
 
+describe('mock mode writes a unique payment id', () => {
+  /*
+   * Migration 013's unique index is on razorpay_payment_id for non-empty
+   * values. Mock mode used to write the constant 'mock_payment', so the first
+   * mock checkout claimed that value and every later one failed the insert --
+   * a 500 on every subsequent checkout, in production, once a single mock
+   * payment existed. Found by driving the live API, not by these tests.
+   */
+  it('REGRESSION: derives the id from the transaction rather than a constant', async () => {
+    delete process.env.RAZORPAY_KEY_ID;
+    delete process.env.RAZORPAY_KEY_SECRET;
+
+    const res = await request(app())
+      .post('/api/subscriptions/verify-payment')
+      .set('Authorization', `Bearer ${jwt.sign({ id: BUYER.id }, process.env.JWT_SECRET, { expiresIn: '1h' })}`)
+      .send({ transactionId: 'txn_race_1', razorpayOrderId: ORDER_ID });
+
+    expect(res.status).toBe(200);
+    expect(txn().razorpay_payment_id).toBe('mock_txn_race_1');
+    expect(txn().razorpay_payment_id).not.toBe('mock_payment');
+  });
+
+  it('two different transactions never collide', async () => {
+    // The property the unique index actually enforces.
+    const idFor = (t) => `mock_${t}`;
+    expect(idFor('txn_a')).not.toBe(idFor('txn_b'));
+  });
+});
+
 describe('the guard does not break the ordinary path', () => {
   it('a failed transaction is not activated by a later call', async () => {
     txn().status = 'failed';

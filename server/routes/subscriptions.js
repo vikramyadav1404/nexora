@@ -276,8 +276,22 @@ router.post('/verify-payment', protect, asyncHandler(async (req, res) => {
     }
   }
 
+  /*
+   * The mock id has to be unique per transaction, not the literal string
+   * 'mock_payment'.
+   *
+   * Migration 013 put a unique index on razorpay_payment_id (for non-empty
+   * values), so a constant meant the first mock payment claimed that value
+   * forever and every later one failed the insert -- a 500 on every checkout
+   * once one mock payment existed. The index did not cause the bug so much as
+   * expose it: duplicate payment ids were always wrong, they were just silent.
+   *
+   * transaction.id rather than a timestamp, because it is already unique and
+   * deterministic -- retrying the same transaction produces the same value
+   * instead of littering the table with near-identical ids.
+   */
   const activated = await activateSubscription(db, transaction, {
-    paymentId: razorpayPaymentId || 'mock_payment',
+    paymentId: razorpayPaymentId || `mock_${transaction.id}`,
     signature: razorpaySignature || ''
   });
 

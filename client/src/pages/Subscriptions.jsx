@@ -303,9 +303,13 @@ export default function Subscriptions() {
                       onClick={() => handleSubscribe(plan.id)}
                       disabled={loading || plan.price === 0}
                     >
-                      {isCurrent
-                        ? <><RefreshCw size={15} /> Renew for 30 days</>
-                        : <><Zap size={15} /> {plan.price === 0 ? 'Free plan' : 'Subscribe'}</>}
+                      {/* Free is never "renewable" -- it does not expire and
+                          costs nothing, so offering to renew it is nonsense. */}
+                      {plan.price === 0
+                        ? <><Check size={15} /> {isCurrent ? 'Your current plan' : 'Always free'}</>
+                        : isCurrent
+                          ? <><RefreshCw size={15} /> Renew for 30 days</>
+                          : <><Zap size={15} /> Subscribe</>}
                     </button>
 
                     {canTrial && plan.price > 0 && (
