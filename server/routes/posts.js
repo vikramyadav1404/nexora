@@ -7,6 +7,7 @@ const {
   loadPostBundles, loadPostBundle
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
+const { claimDailyQuota } = require('../utils/quota');
 const { touchUserActivity, pushNotification } = require('../db/features');
 const { uploadMedia } = require('../utils/storage');
 const { optimizeImage } = require('../utils/image');
@@ -131,17 +132,6 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
       });
     }
 
-    let postsToday = req.userRow.posts_today || 0;
-    if (isToday(req.userRow.last_post_date)) {
-      if (postLimit !== Infinity && postsToday >= postLimit) {
-        return res.status(429).json({
-          message: `Daily post limit reached (${postLimit}/day with network size ${networkSize}). Follow more people to unlock more posts.`
-        });
-      }
-    } else {
-      postsToday = 0;
-    }
-
     const content = sanitizeText(req.body.content, 5000);
     const mediaFiles = [];
 
@@ -201,6 +191,30 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
       return res.status(400).json({ message: 'Post must have content or media' });
     }
 
+    /*
+     * The quota is claimed here: after every validation, immediately before the
+     * row is created.
+     *
+     * Atomicity is what matters, not earliness. The old code read
+     * req.userRow.posts_today, checked it, and wrote it back at the end of the
+     * request, so two concurrent posts both saw the same stale count and both
+     * passed. claimDailyQuota takes a row lock, so only one caller can take the
+     * last slot.
+     *
+     * Claiming any earlier would charge a slot for requests that then fail
+     * validation -- a rejected upload or an empty post would silently cost
+     * someone their only post of the day. A test caught exactly that.
+     */
+    const { allowed, used: postsToday } = await claimDailyQuota(db, {
+      userId, kind: 'post', limit: postLimit, userRow: req.userRow
+    });
+
+    if (!allowed) {
+      return res.status(429).json({
+        message: `Daily post limit reached (${postLimit}/day with network size ${networkSize}). Follow more people to unlock more posts.`
+      });
+    }
+
     const interestTags = (req.userRow.interests || []).slice(0, 5);
     const { data: post, error } = await db.from('posts').insert({
       author_id: userId,
@@ -243,11 +257,7 @@ router.post('/', protect, writeLimiter, upload.array('media', 5), async (req, re
       if (mErr) throw mErr;
     }
 
-    postsToday += 1;
-    await db.from('users').update({
-      posts_today: postsToday,
-      last_post_date: new Date().toISOString()
-    }).eq('id', userId);
+    // The counter was already incremented by claimDailyQuota above.
 
     // Streak + challenge progress (best-effort)
     try {

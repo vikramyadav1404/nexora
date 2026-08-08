@@ -162,6 +162,45 @@ function createFakeSupabase(seed = {}) {
   };
 
   const rpcHandlers = {
+    /**
+     * Mirrors migration 015's claim_daily_quota.
+     *
+     * The real one takes SELECT ... FOR UPDATE so concurrent callers serialise.
+     * Nothing here is concurrent — the fake is synchronous — but the important
+     * property is reproduced: the count is read from the stored row at call
+     * time, never from a caller's stale copy. That is exactly what the old
+     * inline read-then-write got wrong, so a test holding one stale userRow
+     * across two calls sees the second refused.
+     */
+    claim_daily_quota({ p_user_id, p_kind, p_limit }) {
+      if (p_kind !== 'question' && p_kind !== 'post') {
+        return { data: null, error: { code: '23514', message: `unknown quota kind: ${p_kind}` } };
+      }
+      const countCol = p_kind === 'question' ? 'questions_today' : 'posts_today';
+      const dateCol = p_kind === 'question' ? 'last_question_date' : 'last_post_date';
+
+      const row = tables.users.find(u => u.id === p_user_id);
+      if (!row) return { data: null, error: { code: 'P0002', message: 'user not found' } };
+
+      const last = row[dateCol] ? new Date(row[dateCol]) : null;
+      const now = new Date();
+      const sameDay = last
+        && last.getUTCFullYear() === now.getUTCFullYear()
+        && last.getUTCMonth() === now.getUTCMonth()
+        && last.getUTCDate() === now.getUTCDate();
+
+      let used = sameDay ? (row[countCol] || 0) : 0;
+
+      if (p_limit !== null && p_limit !== undefined && used >= p_limit) {
+        return { data: [{ allowed: false, used }], error: null };
+      }
+
+      used += 1;
+      row[countCol] = used;
+      row[dateCol] = now.toISOString();
+      return { data: [{ allowed: true, used }], error: null };
+    },
+
     /** Mirrors migration 005's transfer_points, including the balance floor. */
     transfer_points({ p_from_user, p_to_user, p_points }) {
       const from = tables.users.find(u => u.id === p_from_user);
@@ -280,9 +319,22 @@ function createFakeSupabase(seed = {}) {
       };
     },
     storage: { from: storageFrom },
+    // Exposed so a test can delete a handler to simulate an unapplied migration,
+    // or replace one to simulate a database error.
+    _rpc: rpcHandlers,
     rpc(name, args) {
       const handler = rpcHandlers[name];
-      if (!handler) return Promise.resolve({ data: null, error: { message: `no rpc ${name}` } });
+      if (!handler) {
+        // PGRST202 is what PostgREST actually returns for a function that does
+        // not exist, and routes branch on that code to fall back when a
+        // migration has not been applied yet. Without the code here the fake
+        // reported a generic error and those fallbacks could not be exercised —
+        // callers that correctly refuse to swallow unknown errors would throw.
+        return Promise.resolve({
+          data: null,
+          error: { code: 'PGRST202', message: `Could not find the function public.${name}` }
+        });
+      }
       return Promise.resolve(handler(args));
     }
   };

@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const { apiLimiter } = require('./middleware/rateLimit');
 const { setMediaColumnSupport } = require('./db/helpers');
+const { shouldUseDemoMode, mayPublishDemoLogin } = require('./utils/demoMode');
 
 dotenv.config();
 
@@ -89,28 +90,6 @@ app.get('/api/version', (req, res) => {
   });
 });
 
-function isPlaceholderConfig(url, key) {
-  if (!url || !key) return true;
-  const bad = ['YOUR_PROJECT_REF', 'your_service_role_key', 'your_service_role_key_here', 'xxxxxxxx'];
-  return bad.some(b => url.includes(b) || key.includes(b));
-}
-
-function shouldUseDemoMode() {
-  if (process.env.DEMO_MODE === 'false' || process.env.DEMO_MODE === '0') {
-    const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-    if (isPlaceholderConfig(url, key)) {
-      console.warn('DEMO_MODE=false but Supabase keys missing/placeholder → using DEMO until keys are set.');
-      return true;
-    }
-    return false;
-  }
-  if (process.env.DEMO_MODE === 'true' || process.env.DEMO_MODE === '1') return true;
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-  return isPlaceholderConfig(url, key);
-}
-
 const CORE_TABLES = [
   'users', 'posts', 'questions', 'answers',
   'notifications', 'bookmarks', 'blocks', 'reports',
@@ -187,7 +166,11 @@ async function startServer(opts = {}) {
         version: appVersion.version,
         db: 'demo-memory',
         realBackend: false,
-        demoLogin: { email: 'demo@nexora.com', password: 'demo1234' },
+        // Withheld in production even when the demo was started deliberately —
+        // see utils/demoMode.js.
+        ...(mayPublishDemoLogin()
+          ? { demoLogin: { email: 'demo@nexora.com', password: 'demo1234' } }
+          : {}),
         hint: 'Set real SUPABASE_* keys and DEMO_MODE=false for production backend'
       })
     );

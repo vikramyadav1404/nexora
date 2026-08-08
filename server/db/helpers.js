@@ -107,6 +107,29 @@ async function comparePassword(plain, hash) {
 }
 
 // turn a users table row into what the frontend expects
+/**
+ * The only thing that turns a users row into a response body.
+ *
+ * Everything below is an explicit allowlist, and it has to stay one. This
+ * function used to end with `_raw: safe` -- the whole row minus four fields --
+ * which meant mfa_secret, mfa_locked_until, mfa_failed_attempts,
+ * forgot_password_expire and email_otp_expire were attached to every user it
+ * shaped. GET /api/users/:id accepts any id, so any logged-in account could
+ * read the AES-GCM ciphertext of any other user's TOTP secret, plus the state
+ * of their brute-force lockout.
+ *
+ * That defeated the threat model 010_mfa.sql was written against: encrypting
+ * the secret only helps against someone holding a database dump, and this
+ * handed it over without one. Worse, utils/mfa.js derives its key from
+ * JWT_SECRET when MFA_SECRET_KEY is unset, so one leaked signing secret plus
+ * that endpoint would have yielded plaintext secrets for every user.
+ *
+ * Nothing consumed _raw. It was referenced exactly once in the codebase: the
+ * line that created it.
+ *
+ * Callers may still select('*') -- this allowlist is what makes that safe, so
+ * adding a field here is the thing to be careful about, not the query.
+ */
 function shapeUser(row, extras = {}) {
   if (!row) return null;
   const {
@@ -164,9 +187,7 @@ function shapeUser(row, extras = {}) {
     friendRequests: extras.friendRequests || [],
     following: extras.following || [],
     createdAt: safe.created_at,
-    updatedAt: safe.updated_at,
-    // raw fields sometimes needed server-side
-    _raw: safe
+    updatedAt: safe.updated_at
   };
 }
 

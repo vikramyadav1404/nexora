@@ -6,6 +6,7 @@ const {
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendError, asyncHandler } = require('../utils/respond');
+const { claimDailyQuota } = require('../utils/quota');
 
 async function getVoteLists(db, table, idCol, id) {
   const { data } = await db.from(table).select('user_id, vote_type').eq(idCol, id);
@@ -124,20 +125,27 @@ router.post('/', protect, asyncHandler(async (req, res) => {
 
   if (!title || !body) return res.status(400).json({ message: 'Title and body are required' });
 
+  /*
+   * Claimed before the insert, not after.
+   *
+   * This used to check req.userRow's counter and write it back at the end of
+   * the request. Both halves read a value loaded once by protect, so two
+   * concurrent requests both saw 0, both passed, and both wrote 1 -- a free
+   * account could ask unlimited questions by firing them in parallel, which is
+   * the whole thing the paid plans sell.
+   */
   const limit = getDailyQuestionLimit(user);
-  let questionsToday = user.questions_today || 0;
+  const { allowed } = await claimDailyQuota(db, {
+    userId: user.id, kind: 'question', limit, userRow: user
+  });
 
-  if (isToday(user.last_question_date)) {
-    if (limit !== Infinity && questionsToday >= limit) {
-      const plan = user.subscription_plan || 'free';
-      return res.status(429).json({
-        message: `📊 Daily question limit reached! Your ${plan} plan allows ${limit} question(s)/day. Upgrade to ask more!`,
-        limit,
-        plan
-      });
-    }
-  } else {
-    questionsToday = 0;
+  if (!allowed) {
+    const plan = user.subscription_plan || 'free';
+    return res.status(429).json({
+      message: `📊 Daily question limit reached! Your ${plan} plan allows ${limit} question(s)/day. Upgrade to ask more!`,
+      limit,
+      plan
+    });
   }
 
   let tagList = tags
@@ -155,11 +163,7 @@ router.post('/', protect, asyncHandler(async (req, res) => {
   }).select().single();
   if (error) throw error;
 
-  questionsToday += 1;
-  await db.from('users').update({
-    questions_today: questionsToday,
-    last_question_date: new Date().toISOString()
-  }).eq('id', user.id);
+  // The counter was already incremented by claimDailyQuota above.
 
   const { data: author } = await db.from('users').select(authorFields()).eq('id', user.id).single();
   res.status(201).json({
