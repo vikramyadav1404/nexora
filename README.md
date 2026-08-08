@@ -11,7 +11,7 @@ flowchart LR
     B["Browser<br/>React 19 SPA"]
     S["Vercel Static<br/>Vite build, SPA rewrite"]
     A["Express API<br/>Vercel serverless, single handler"]
-    PG[("Supabase Postgres<br/>22 tables, 10 plpgsql functions")]
+    PG[("Supabase Postgres<br/>22 tables, 12 plpgsql functions")]
     ST["Supabase Storage<br/>avatars · covers · posts"]
     RT["Supabase Realtime<br/>notifications channel"]
     CR["Vercel Cron<br/>daily · weekly"]
@@ -51,11 +51,11 @@ The whole API is one serverless handler — `server/vercel.json` routes `/(.*)` 
 | Styling | Hand-written CSS, custom properties, `data-theme` light/dark. No framework |
 | Backend | Node, Express 4, `helmet`, `compression`, `express-rate-limit` |
 | Data access | `@supabase/supabase-js` against PostgREST. **No ORM** — no Prisma, no Knex, no `pg` |
-| Schema | Raw SQL, 13 numbered migrations in `server/db/migrations/` |
+| Schema | Raw SQL, 16 numbered migrations in `server/db/migrations/` |
 | Auth | `jsonwebtoken`, `bcryptjs` (cost 12), TOTP implemented against `node:crypto` |
 | Media | `sharp` server-side, `multer` memory storage, Supabase Storage buckets |
 | Optional services | Razorpay, Anthropic SDK, Nodemailer, Sentry (raw HTTP, no SDK) |
-| Tests | Vitest + Supertest, 262 tests across 16 files, no database required |
+| Tests | Vitest + Supertest, 292 tests across 17 files, no database required |
 
 **Counted from the code:** 94 REST endpoints across 18 route modules, plus a separate 59-endpoint in-memory mirror for demo mode. 22 pages, 19 of them lazy-loaded. 10 shared UI primitives, 8 custom hooks.
 
@@ -96,6 +96,47 @@ Transferring points was a read-modify-write across two `users` rows. Two concurr
 `transfer_points()` takes `FOR UPDATE` locks on both rows inside one transaction, with `ORDER BY id` in the lock step so two callers transferring in opposite directions acquire in the same sequence and cannot deadlock.
 
 **Trade-off.** Business rules — the minimum balance floor, the self-transfer rejection — now live in SQL, where they are invisible to anyone reading the route. The route falls back to a non-atomic JS path if the function is missing, which is a correctness compromise made deliberately so a partially-migrated database still works.
+
+### Daily quotas are a row lock, and response shaping is an allowlist
+
+`server/db/migrations/015_quota.sql`, `server/utils/quota.js`, `server/db/helpers.js`
+
+Two rules that exist because breaking them was cheap and the consequences were not.
+
+**The quota.** The daily question limit is the entire difference the paid plans
+sell — free is 1/day, gold unlimited. It was enforced by reading the counter from
+the user row loaded at the start of the request, checking it, and writing it back
+at the end. Two requests arriving together both read `0`, both passed, both wrote
+`1`, so firing them in parallel bypassed the limit and therefore the plans.
+
+`claim_daily_quota` takes `SELECT ... FOR UPDATE` before reading, so callers
+serialise. A conditional update — the pattern the trial claim uses — is wrong
+here: a trial is a one-shot transition with exactly one winner ever, whereas a
+counter has a legitimate winner on every request until the limit hits, so
+compare-and-swap would just make concurrent callers fight and retry.
+
+The claim sits immediately before the insert rather than at the top of the
+handler. An earlier version claimed early and a test caught that a rejected
+upload then cost the user their only post of the day.
+
+**The shaping.** `shapeUser` is an explicit allowlist and has to stay one. It
+used to end with `_raw: safe` — the whole row minus four fields — which attached
+`mfa_secret`, `mfa_locked_until` and the password-reset expiry to every user it
+shaped. `GET /api/users/:id` accepts any id, so any authenticated account could
+read another user's encrypted TOTP secret. Encrypting that secret at rest only
+defends against a database dump; this handed it over without one.
+
+That is why callers may still `select('*')` — the allowlist is what makes the
+query safe, so the thing to be careful about is adding a field to the shaper, not
+widening a query.
+
+**Trade-off.** Both put correctness in places a reader of the route will not see:
+one in plpgsql, one in a shared helper. The quota degrades to the old
+read-then-write when migration 015 is absent, which keeps a partially-migrated
+database working at the cost of the race being open — the same deliberate
+compromise `transfer_points` makes. Only a "function missing" error triggers that
+fallback; any other database error propagates, because treating an outage as
+"allowed" would turn it into an unlimited quota.
 
 ### Subscriptions do not recur, and renewal stacking made that a trade-off
 
@@ -175,7 +216,7 @@ Routes call PostgREST directly through `getSupabase()`. The API holds the `servi
 
 ## Local setup
 
-Requires Node 18+.
+Requires Node 20+ — all three package.json files declare `"engines": { "node": ">=20" }` and CI pins 20.
 
 ```bash
 git clone https://github.com/vikramyadav1404/nexora.git
@@ -214,7 +255,7 @@ npm run dev            # root: api + client
 npm run check          # root: lint + client build
 
 cd server
-npm test               # 262 tests, no database needed
+npm test               # 292 tests, no database needed
 npm run migration:runner -- 005 006   # build a paste-ready SQL file
 npm run backup         # dump every table to backups/*.json
 npm run smoke          # hit /api/ready and /api/health
@@ -250,7 +291,7 @@ A separate 59-endpoint mirror in `server/routes/demo.js` shadows this surface wh
 cd server && npm test
 ```
 
-262 tests, 16 files, no database — the suite injects a fake PostgREST client (`server/test/helpers/fakeSupabase.js`) that also stubs Storage. Coverage is weighted toward things that are expensive to get wrong rather than toward line count:
+292 tests, 17 files, no database — the suite injects a fake PostgREST client (`server/test/helpers/fakeSupabase.js`) that also stubs Storage. Coverage is weighted toward things that are expensive to get wrong rather than toward line count:
 
 - **Payments** — a regression test replays the privilege-escalation attack that used to work (a client-supplied `isMock` flag skipping signature verification) and asserts it now fails.
 - **Two-factor** — all six RFC 6238 vectors including `T=20000000000`, which catches a counter written as 32-bit; replay of a code inside its own 30-second window; the per-account lockout.
@@ -268,7 +309,7 @@ Stated rather than omitted.
 
 - **Search returns at most 50 results per type, and cannot page past that.** `search_questions`, `search_posts` and `search_people` all end in `LIMIT LEAST(GREATEST(p_limit, 1), 50)`. Ranked results have no usable cursor either — rank is not monotonic with time, so the `created_at` keyset the feed uses does not apply. Paging deeper needs a signature change.
 - **A query that is only a typo finds nothing.** `search_questions` and `search_posts` filter on `search_vector @@ websearch_to_tsquery(...)` before ranking, so trigram similarity can only reorder results that full-text search already matched — it cannot surface one on its own. A query of nothing but stopwords produces an empty tsquery and matches nothing, by the same mechanism.
-- **The people search in `server/routes/users.js` still uses `ILIKE '%q%'`,** which no index can serve because of the leading wildcard. `/api/search` no longer does.
+- **People search falls back to `ILIKE '%q%'` if migration 007 is missing.** Both `/api/search` and `/api/users/search` call `search_people` now; the unindexed fallback only runs when that function is absent, and warns once when it does.
 - **`storage_key` is not recorded until migration 011 is applied.** The insert falls back to omitting the column and logs a warning once, so posting still works — but until 011 runs, uploaded objects cannot be swept or deleted alongside their post. Rows written before 011, and any written by the multipart path, keep an empty key permanently.
 - **`audit_logs` is defined in `004_production.sql` but does not exist in the database** — 004 was never applied. Nothing writes to it either. Migration 012 re-states the rest of 004 and deliberately leaves this table out.
 - **Video is stored, never transcoded.** `server/utils/image.js` optimises images to WebP and passes video through untouched.
