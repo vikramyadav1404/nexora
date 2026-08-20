@@ -678,12 +678,29 @@ router.delete('/account', protect, sensitiveLimiter, asyncHandler(async (req, re
     () => db.from('posts').delete().eq('author_id', userId),
     () => db.from('answers').delete().eq('author_id', userId),
     () => db.from('questions').delete().eq('author_id', userId),
-    () => db.from('reports').delete().eq('reporter_id', userId),
-    () => db.from('users').delete().eq('id', userId)
+    () => db.from('reports').delete().eq('reporter_id', userId)
   ];
+
+  /*
+   * The dependent rows are best-effort. Every foreign key onto users is
+   * ON DELETE CASCADE, so the row going away takes them regardless; sweeping
+   * first just keeps the cascade small, and one failing step is not a reason to
+   * refuse the deletion.
+   */
   for (const fn of cleanups) {
     try { await fn(); } catch (e) { console.warn('account cleanup step:', e.message); }
   }
+
+  /*
+   * The users row is NOT best-effort, and it used to be.
+   *
+   * It was the last entry in the loop above, so its failure was swallowed like
+   * any other step and the response said "Account deleted permanently" whether
+   * or not the account still existed. Someone exercising a deletion right was
+   * told it had happened when it had not.
+   */
+  const { error: deleteErr } = await db.from('users').delete().eq('id', userId);
+  if (deleteErr) throw deleteErr;
 
   res.json({ message: 'Account deleted permanently' });
 }, "Authentication failed"));

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
-const { shapeUser, shapePost, shapeQuestion, loadAuthorMap } = require('../db/helpers');
+const { shapePerson, shapePost, shapeQuestion, loadAuthorMap } = require('../db/helpers');
 const { INTERESTS } = require('../db/interests');
 const { escapePostgrestValue } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
@@ -146,7 +146,13 @@ router.get('/', protect, asyncHandler(async (req, res) => {
     ({ peopleRows, postRows, questionRows } = await likeSearch(db, q, viewerId));
   }
 
-  const people = peopleRows.map(u => shapeUser(u));
+  /*
+   * shapePerson, not shapeUser. This returns up to ten arbitrary users to any
+   * logged-in caller, and shapeUser carries email, phone and role -- so /api/search
+   * was handing out contact details for strangers. /api/users/search already
+   * used the narrow shape; this one was missed.
+   */
+  const people = peopleRows.map(shapePerson);
 
   // One author query for both result sets, instead of one per row (was up to 20)
   const authors = await loadAuthorMap(db, [

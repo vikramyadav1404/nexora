@@ -17,8 +17,23 @@ router.get('/', protect, asyncHandler(async (req, res) => {
 
   if (error) throw error;
   const notifications = (data || []).map(shapeNotification);
-  const unread = notifications.filter(n => !n.read).length;
-  res.json({ notifications, unread });
+
+  /*
+   * Counted in the database, not from the page above.
+   *
+   * `notifications.filter(...)` only ever saw the newest 50, so a user with 200
+   * unread was told 50 -- and once they had more than 50 notifications in
+   * total, the older unread ones fell outside the window entirely: never shown,
+   * never counted, and cleared by read-all without ever having been seen.
+   */
+  const { count, error: countErr } = await db
+    .from('notifications')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', req.user.id)
+    .eq('read', false);
+
+  if (countErr) throw countErr;
+  res.json({ notifications, unread: count || 0 });
 }, "Could not load notifications"));
 
 // POST /api/notifications/read-all

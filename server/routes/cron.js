@@ -84,6 +84,28 @@ async function sweepRateLimits() {
   return { deleted: data ?? 0 };
 }
 
+/**
+ * Escape a value for interpolation into HTML email.
+ *
+ * The weekly digest built its markup with template literals straight from user
+ * content -- the recipient's name, their interest tags, question titles and
+ * post bodies. Question titles are the sharpest of those: nothing strips markup
+ * on the way in (text is stored as typed, by design), so a question titled
+ * `<a href="https://evil.example">Reset your password</a>` was delivered as a
+ * live link, from this platform's address, to every verified user sharing that
+ * interest. Tracking pixels via <img> would have worked the same way, and a
+ * post body sliced at 120 characters could truncate mid-tag and corrupt the
+ * rest of the message.
+ */
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /** Emails each verified user a recap of the week in their interest areas. */
 async function weeklyDigest() {
   const db = getSupabase();
@@ -124,12 +146,12 @@ async function weeklyDigest() {
     const html = `
       <div style="font-family:Arial;max-width:560px;margin:auto;padding:24px">
         <h2>Your week on Nexora</h2>
-        <p>Hi ${user.name}, here is what happened in ${interests.slice(0, 3).join(', ')}.</p>
+        <p>Hi ${escapeHtml(user.name)}, here is what happened in ${escapeHtml(interests.slice(0, 3).join(', '))}.</p>
         ${qs.length ? `<h3>Questions worth a look</h3><ul>${
-          qs.map(q => `<li>${q.title}</li>`).join('')
+          qs.map(q => `<li>${escapeHtml(q.title)}</li>`).join('')
         }</ul>` : ''}
         ${ps.length ? `<h3>Posts people shared</h3><ul>${
-          ps.map(p => `<li>${String(p.content || '').slice(0, 120)}…</li>`).join('')
+          ps.map(p => `<li>${escapeHtml(String(p.content || '').slice(0, 120))}…</li>`).join('')
         }</ul>` : ''}
         <p style="color:#888;font-size:12px">You can turn digests off in Settings.</p>
       </div>`;

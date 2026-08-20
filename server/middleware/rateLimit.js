@@ -67,13 +67,23 @@ class PostgresStore {
     }
   }
 
-  async decrement(key) {
-    try {
-      await getSupabase().rpc('rate_limit_hit', {
-        p_key: `${this.prefix}:${key}`,
-        p_window_ms: this.windowMs
-      });
-    } catch { /* best effort */ }
+  /**
+   * express-rate-limit calls this to give a request its budget back, under
+   * skipSuccessfulRequests / skipFailedRequests.
+   *
+   * It used to call rate_limit_hit -- the same RPC increment() uses, which does
+   * `hits = hits + 1` (migration 005). So decrementing incremented: enabling
+   * either skip option would have burned the budget twice as fast as not
+   * enabling it. No limiter sets those today, which is the only reason this was
+   * invisible.
+   *
+   * There is no decrement function in the schema. Rather than ship a wrong one,
+   * this is a documented no-op: the counter stays accurate for the requests
+   * that were actually made, which is the conservative direction. Add a
+   * rate_limit_release RPC if a limiter ever needs real refunds.
+   */
+  async decrement() {
+    /* no-op — see above */
   }
 
   async resetKey(key) {

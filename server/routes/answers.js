@@ -7,6 +7,7 @@ const {
 const { protect } = require('../middleware/auth');
 const { pushNotification, touchUserActivity } = require('../db/features');
 const { sendError, asyncHandler } = require('../utils/respond');
+const { applyVotePoints } = require('../utils/votePoints');
 
 // POST /api/answers/:questionId
 router.post('/:questionId', protect, asyncHandler(async (req, res) => {
@@ -68,17 +69,35 @@ router.post('/:id/vote', protect, asyncHandler(async (req, res) => {
   const answerId = req.params.id;
   const userId = req.user.id;
 
+  /*
+   * An allowlist, because the branch below is `if (type === 'up') ... else`.
+   * Anything that is not the string 'up' fell into the downvote path: an empty
+   * body, a null, a typo, a client sending {vote:'up'} under the wrong key.
+   * A curl with no body silently cost the author a point.
+   */
+  if (type !== 'up' && type !== 'down') {
+    return res.status(400).json({ message: "vote type must be 'up' or 'down'" });
+  }
+
   const { data: answer } = await db.from('answers').select('*').eq('id', answerId).maybeSingle();
   if (!answer) return res.status(404).json({ message: 'Answer not found' });
   if (answer.author_id === userId) {
     return res.status(400).json({ message: 'You cannot vote on your own answer' });
   }
 
-  const { data: author } = await db.from('users').select('*').eq('id', answer.author_id).single();
-  let points = author.points || 0;
-  let totalUpvotes = author.total_upvotes_received || 0;
-  let bonusAwarded = answer.bonus_points_awarded;
-
+  /*
+   * Deltas, not a remembered absolute.
+   *
+   * This used to read the author row, mutate `points` in JavaScript across
+   * several awaits, and write the absolute value back -- unconditionally, even
+   * on the upvote path where points had not changed. Any concurrent change to
+   * that author was silently reverted: posting an answer (+5) while somebody
+   * upvoted an older one lost the award, because the vote handler wrote back
+   * the balance it read beforehand.
+   *
+   * applyVotePoints does the arithmetic in one statement against the current
+   * row (migration 016), so nothing is carried across an await.
+   */
   const { data: existing } = await db
     .from('answer_votes')
     .select('*')
@@ -86,52 +105,79 @@ router.post('/:id/vote', protect, asyncHandler(async (req, res) => {
     .eq('user_id', userId)
     .maybeSingle();
 
+  let pointsDelta = 0;
+  let upvotesDelta = 0;
+  let pointsApplied = false;
+
   if (type === 'up') {
     if (existing?.vote_type === 'up') {
+      // Tapping up again removes the upvote.
       await db.from('answer_votes').delete().eq('answer_id', answerId).eq('user_id', userId);
-      totalUpvotes = Math.max(0, totalUpvotes - 1);
+      upvotesDelta -= 1;
     } else {
-      await db.from('answer_votes').upsert({
-        answer_id: answerId,
-        user_id: userId,
-        vote_type: 'up'
-      });
       if (existing?.vote_type === 'down') {
-        // switching down → up
-      } else {
-        totalUpvotes += 1;
+        // Undo the downvote as part of the switch -- but only give back a point
+        // if one was actually taken. See points_applied below.
+        if (existing.points_applied !== false) pointsDelta += 1;
       }
-
-      const votes = await getVoteLists(db, 'answer_votes', 'answer_id', answerId);
-      if (votes.upvotes.length >= 5 && !bonusAwarded) {
-        points += 5;
-        bonusAwarded = true;
-        await db.from('answers').update({ bonus_points_awarded: true }).eq('id', answerId);
-      }
-    }
-  } else {
-    if (existing?.vote_type === 'down') {
-      await db.from('answer_votes').delete().eq('answer_id', answerId).eq('user_id', userId);
-      points = Math.max(0, points + 1); // restore
-    } else {
-      if (existing?.vote_type === 'up') {
-        totalUpvotes = Math.max(0, totalUpvotes - 1);
-      }
+      upvotesDelta += 1;
       await db.from('answer_votes').upsert({
         answer_id: answerId,
         user_id: userId,
-        vote_type: 'down'
+        vote_type: 'up',
+        points_applied: false
       });
-      points = Math.max(0, points - 1);
+    }
+  } else if (existing?.vote_type === 'down') {
+    // Tapping down again removes the downvote.
+    await db.from('answer_votes').delete().eq('answer_id', answerId).eq('user_id', userId);
+    /*
+     * Only restore what was taken.
+     *
+     * The deduction below has a floor at zero, so an author already at zero
+     * loses nothing -- and this used to credit +1 regardless, minting points
+     * out of a downvote that cost them nothing. N voters downvoting and undoing
+     * left the author with N points they never earned, and a new account sits
+     * at exactly the floor where it fires.
+     *
+     * `!== false` rather than `=== true`: a row written before migration 016
+     * has no such field, and those votes did deduct.
+     */
+    if (existing.points_applied !== false) pointsDelta += 1;
+  } else {
+    if (existing?.vote_type === 'up') upvotesDelta -= 1;
+
+    // Whether the deduction lands depends on the author's balance, which only
+    // the database knows. Ask it, and record the answer on the vote row.
+    const { data: current } = await db
+      .from('users').select('points').eq('id', answer.author_id).maybeSingle();
+    pointsApplied = (current?.points || 0) > 0;
+    if (pointsApplied) pointsDelta -= 1;
+
+    await db.from('answer_votes').upsert({
+      answer_id: answerId,
+      user_id: userId,
+      vote_type: 'down',
+      points_applied: pointsApplied
+    });
+  }
+
+  // The 5-upvote bonus, still a one-shot flagged on the answer row.
+  if (type === 'up' && existing?.vote_type !== 'up') {
+    const tally = await getVoteLists(db, 'answer_votes', 'answer_id', answerId);
+    if (tally.upvotes.length >= 5 && !answer.bonus_points_awarded) {
+      const { data: claimed } = await db.from('answers')
+        .update({ bonus_points_awarded: true })
+        .eq('id', answerId)
+        .eq('bonus_points_awarded', false)
+        .select('id');
+      // Conditional, so two voters crossing the threshold together award it
+      // once rather than twice.
+      if (claimed && claimed.length) pointsDelta += 5;
     }
   }
 
-  const badges = computeBadges(points, author.total_answers || 0);
-  await db.from('users').update({
-    points,
-    total_upvotes_received: totalUpvotes,
-    badges
-  }).eq('id', author.id);
+  await applyVotePoints(db, answer.author_id, pointsDelta, upvotesDelta);
 
   const votes = await getVoteLists(db, 'answer_votes', 'answer_id', answerId);
   res.json({ upvotes: votes.upvotes.length, downvotes: votes.downvotes.length });

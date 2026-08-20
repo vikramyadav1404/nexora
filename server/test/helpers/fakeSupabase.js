@@ -175,6 +175,35 @@ function createFakeSupabase(seed = {}) {
 
   const rpcHandlers = {
     /**
+     * Mirrors migration 016's apply_vote_points.
+     *
+     * Deltas against the stored row, floored at zero, badges recomputed -- the
+     * same contract as the SQL. The badge thresholds are duplicated in the
+     * migration by necessity; a test asserts the two agree.
+     */
+    apply_vote_points({ p_user_id, p_points_delta, p_upvotes_delta }) {
+      const row = tables.users.find(u => u.id === p_user_id);
+      if (!row) return { data: null, error: { code: 'P0002', message: 'user not found' } };
+
+      const points = Math.max(0, (row.points || 0) + (p_points_delta || 0));
+      const upvotes = Math.max(0, (row.total_upvotes_received || 0) + (p_upvotes_delta || 0));
+      const answers = row.total_answers || 0;
+
+      const badges = [];
+      if (points >= 50) badges.push('bronze');
+      if (points >= 200) badges.push('silver');
+      if (points >= 500) badges.push('gold');
+      if (answers >= 10) badges.push('contributor');
+      if (answers >= 50) badges.push('expert');
+
+      row.points = points;
+      row.total_upvotes_received = upvotes;
+      row.badges = badges;
+
+      return { data: [{ points, total_upvotes_received: upvotes, badges }], error: null };
+    },
+
+    /**
      * Mirrors migration 015's claim_daily_quota.
      *
      * The real one takes SELECT ... FOR UPDATE so concurrent callers serialise.

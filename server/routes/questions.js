@@ -8,18 +8,35 @@ const {
 const { protect } = require('../middleware/auth');
 const { sendError, asyncHandler } = require('../utils/respond');
 const { claimDailyQuota } = require('../utils/quota');
+const { sanitizeText, escapePostgrestValue } = require('../utils/validate');
 
 // GET /api/questions
 router.get('/', protect, asyncHandler(async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
+  /*
+   * Both bounded. `?page=0` used to produce `from = -10`, which PostgREST turns
+   * into a negative OFFSET and Postgres rejects -- a 500 for what is a client
+   * mistake. `?limit=5000` fetched 5000 rows and then ran three queries per row
+   * below: 15,000 round trips in one request. Every other paginated route in
+   * this codebase caps; this one did not.
+   */
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
   const { tag, search, sort = 'newest' } = req.query;
   const db = getSupabase();
 
   let query = db.from('questions').select('*', { count: 'exact' });
 
   if (tag) query = query.contains('tags', [tag]);
-  if (search) query = query.or(`title.ilike.%${search}%,body.ilike.%${search}%`);
+  /*
+   * escapePostgrestValue, as routes/search.js and routes/users.js already do.
+   * Interpolated raw, a comma injected an extra filter term and a bare `%`
+   * matched every row -- utils/validate.js was written for exactly this and
+   * this call site was missed.
+   */
+  if (search) {
+    const q = escapePostgrestValue(String(search));
+    query = query.or(`title.ilike.%${q}%,body.ilike.%${q}%`);
+  }
 
   if (sort === 'newest' || sort === 'votes') {
     query = query.order('created_at', { ascending: false });
@@ -113,7 +130,36 @@ router.post('/', protect, asyncHandler(async (req, res) => {
   const user = req.userRow;
   const { title, body, tags } = req.body;
 
-  if (!title || !body) return res.status(400).json({ message: 'Title and body are required' });
+  /*
+   * Validated and capped, like every other write path in this codebase.
+   *
+   * These two were the exception: they went from req.body into the insert with
+   * no sanitizeText, no length cap and no type check. A body up to the 2MB JSON
+   * limit was stored verbatim, and `{"title": {"a":1}}` passed the truthiness
+   * check below and put a JSON object into a TEXT column.
+   *
+   * Note what this does NOT do: sanitizeText trims and truncates, it does not
+   * strip markup. A title containing HTML is still stored as typed, which is
+   * correct -- the database holds text, and escaping belongs at each output.
+   * The weekly digest renders titles into email and now escapes them there;
+   * see cron.js. Storing raw and escaping on output is the right split, but it
+   * only works if every output actually escapes.
+   */
+  /*
+   * Type-checked before sanitizing. sanitizeText coerces with String(), so an
+   * object arrives as the literal "[object Object]" -- truthy, non-empty, and
+   * stored as the question's title. Rejecting is the only sensible answer.
+   */
+  if (typeof title !== 'string' || typeof body !== 'string') {
+    return res.status(400).json({ message: 'Title and body must be text' });
+  }
+
+  const cleanTitle = sanitizeText(title, 300);
+  const cleanBody = sanitizeText(body, 10000);
+
+  if (!cleanTitle || !cleanBody) {
+    return res.status(400).json({ message: 'Title and body are required' });
+  }
 
   /*
    * Claimed before the insert, not after.
@@ -138,17 +184,30 @@ router.post('/', protect, asyncHandler(async (req, res) => {
     });
   }
 
-  let tagList = tags
-    ? (Array.isArray(tags) ? tags : tags.split(',')).map(t => t.trim().toLowerCase()).filter(Boolean)
-    : [];
+  /*
+   * Every branch here used to be a 500 waiting to happen: `{"tags": 5}` hit
+   * `tags.split is not a function`, `{"tags": {}}` was truthy but not an array
+   * so it took the same path, and `{"tags": [1,2]}` died on `t.trim`. All three
+   * are 400-class inputs that answered 500 -- and the daily quota was already
+   * claimed by then, so a free user lost their one question of the day to it.
+   */
+  const rawTags = Array.isArray(tags)
+    ? tags
+    : (typeof tags === 'string' ? tags.split(',') : []);
+
+  let tagList = rawTags
+    .filter(t => typeof t === 'string' || typeof t === 'number')
+    .map(t => sanitizeText(String(t), 40).toLowerCase().trim())
+    .filter(Boolean)
+    .slice(0, 10);
   // Merge user interests so questions appear in Spaces
   const interests = user.interests || [];
   tagList = [...new Set([...tagList, ...interests.slice(0, 3)])];
 
   const { data: question, error } = await db.from('questions').insert({
     author_id: user.id,
-    title,
-    body,
+    title: cleanTitle,
+    body: cleanBody,
     tags: tagList
   }).select().single();
   if (error) throw error;
@@ -172,6 +231,12 @@ router.post('/:id/vote', protect, asyncHandler(async (req, res) => {
   const db = getSupabase();
   const questionId = req.params.id;
   const userId = req.user.id;
+
+  // Same allowlist as answers.js: the branch below is `if up ... else down`, so
+  // anything that is not 'up' -- including an empty body -- cast a downvote.
+  if (type !== 'up' && type !== 'down') {
+    return res.status(400).json({ message: "vote type must be 'up' or 'down'" });
+  }
 
   const { data: question } = await db.from('questions').select('*').eq('id', questionId).maybeSingle();
   if (!question) return res.status(404).json({ message: 'Question not found' });

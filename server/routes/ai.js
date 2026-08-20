@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
+const { requireAdmin } = require('../middleware/admin');
 const { aiLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
 const { INTERESTS } = require('../db/interests');
@@ -157,7 +158,12 @@ router.post('/suggest-tags', async (req, res) => {
  * Triage for the admin report queue — a recommendation for a human, not an
  * automatic enforcement action.
  */
-router.post('/moderate', async (req, res) => {
+/*
+ * requireAdmin, matching what the docstring above already claims this is for.
+ * The router applies only `protect` and `aiLimiter`, so every logged-in user
+ * could call the moderation model directly.
+ */
+router.post('/moderate', requireAdmin, async (req, res) => {
   try {
     const content = sanitizeText(req.body.content, 6000);
     const reason = sanitizeText(req.body.reason, 200);

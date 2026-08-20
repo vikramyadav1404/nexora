@@ -5,7 +5,7 @@ const { protect } = require('../middleware/auth');
 const { INTERESTS } = require('../db/interests');
 const { sendError, asyncHandler } = require('../utils/respond');
 const {
-  shapeUser, shapeQuestion, shapeAuthor, loadPostBundles, loadAuthorMap
+  shapePerson, shapeQuestion, shapeAuthor, loadPostBundles, loadAuthorMap
 } = require('../db/helpers');
 
 // GET /api/spaces
@@ -75,7 +75,10 @@ router.get('/:id', protect, asyncHandler(async (req, res) => {
     .eq('is_active', true)
     .limit(20);
 
-  const members = (memberRows || []).map(u => shapeUser(u));
+  // shapePerson: a Space member list is other people. shapeUser would return
+  // every member's email and phone to anyone who opened the Space, and there
+  // are only ~16 interest ids to walk.
+  const members = (memberRows || []).map(shapePerson);
 
   res.json({ space, posts, questions, members });
 }, "Could not load Spaces"));

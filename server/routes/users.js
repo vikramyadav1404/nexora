@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
-const { shapeUser, shapeAuthor, withMediaColumns, mediaColumnsAvailable } = require('../db/helpers');
+const {
+  shapeUser, shapePerson, updateSelf, shapeAuthor, withMediaColumns, mediaColumnsAvailable
+} = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendEmail, generateOTP } = require('../utils/email');
 const { INTERESTS, GENDERS, normalizeInterests } = require('../db/interests');
@@ -14,48 +16,6 @@ const { MediaError, verifyUpload, buildDerivatives, cleanupPrevious } = require(
 async function getFriendIds(db, userId) {
   const { data } = await db.from('friendships').select('friend_id').eq('user_id', userId);
   return (data || []).map(r => r.friend_id);
-}
-
-/**
- * The lightweight person shape used by friend lists, suggestions and people
- * search -- distinct from shapeUser, which is the full self/profile payload.
- *
- * getUsersByIds and the people-search mapper each built this object literal
- * separately and identically, so a field added to one silently produced two
- * different shapes on endpoints the same page consumes.
- */
-function shapePerson(u) {
-  return {
-    _id: u.id,
-    id: u.id,
-    name: u.name,
-    avatar: u.avatar,
-    avatarUrl: u.avatar,
-    avatarThumbUrl: u.avatar_thumb_url || u.avatar,
-    email: u.email,
-    points: u.points,
-    badges: u.badges || []
-  };
-}
-
-/**
- * Apply a patch to the caller's own row and hand back the updated record.
- *
- * The four-line PostgREST chain plus `if (error) throw` appeared four times in
- * this file -- once per profile, avatar, cover and media route. Identical every
- * time, and every one of them scoped to req.user.id, which is the part that
- * must not be got wrong.
- */
-async function updateSelf(db, userId, updates) {
-  const { data: row, error } = await db
-    .from('users')
-    .update(updates)
-    .eq('id', userId)
-    .select()
-    .single();
-
-  if (error) throw error;
-  return row;
 }
 
 async function getUsersByIds(db, ids) {

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
-const { shapeUser } = require('../db/helpers');
+const { shapePerson } = require('../db/helpers');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
@@ -55,7 +55,8 @@ router.get('/blocks', protect, asyncHandler(async (req, res) => {
   if (!ids.length) return res.json({ blocks: [] });
 
   const { data: users } = await db.from('users').select('*').in('id', ids);
-  res.json({ blocks: (users || []).map(u => shapeUser(u)) });
+  // The people you blocked are still other people -- no contact details.
+  res.json({ blocks: (users || []).map(shapePerson) });
 }, "Could not complete that request"));
 
 // POST /api/reports

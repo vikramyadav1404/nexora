@@ -3,7 +3,7 @@ const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { requireAdmin } = require('../middleware/admin');
 const { shapeUser } = require('../db/helpers');
-const { sanitizeText } = require('../utils/validate');
+const { sanitizeText, escapePostgrestValue } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
 
 // GET /api/admin/reports
@@ -24,11 +24,20 @@ router.patch('/reports/:id', requireAdmin, asyncHandler(async (req, res) => {
   if (!allowed.includes(status)) {
     return res.status(400).json({ message: 'Invalid status' });
   }
+  /*
+   * admin_note is only written when a note was actually sent.
+   *
+   * It used to be included unconditionally, and sanitizeText(undefined) returns
+   * '' -- so a moderator reopening a report with {"status":"reviewing"}, the
+   * natural request when you are not editing the note, silently erased whatever
+   * the previous moderator had written. There is no history table; that text
+   * was simply gone.
+   */
   const updates = {
     status,
-    admin_note: sanitizeText(note, 1000),
     resolved_at: ['resolved', 'dismissed'].includes(status) ? new Date().toISOString() : null
   };
+  if (note !== undefined) updates.admin_note = sanitizeText(note, 1000);
   const { data, error } = await getSupabase()
     .from('reports')
     .update(updates)
@@ -80,10 +89,18 @@ router.get('/stats', requireAdmin, asyncHandler(async (req, res) => {
 router.get('/users/search', requireAdmin, asyncHandler(async (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.json({ users: [] });
+  /*
+   * escapePostgrestValue, like search.js and users.js. Admin-only, so injection
+   * severity is low -- but the escaper is also what makes a comma safe, and
+   * without it searching "Smith, John" silently truncated the filter term and
+   * returned the wrong people. A moderation tool quietly finding the wrong
+   * account is its own problem.
+   */
+  const safeQ = escapePostgrestValue(q);
   const { data, error } = await getSupabase()
     .from('users')
     .select('id, name, email, role, is_active, points, created_at')
-    .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
+    .or(`name.ilike.%${safeQ}%,email.ilike.%${safeQ}%`)
     .limit(20);
   if (error) throw error;
   res.json({ users: (data || []).map(u => shapeUser(u)) });
