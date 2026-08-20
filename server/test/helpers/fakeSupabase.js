@@ -67,6 +67,7 @@ class Query {
     this.payload = payload;
     this.filters = [];
     this._limit = null;
+    this._range = null;
     this._wantCount = false;
     this._headOnly = false;
   }
@@ -95,6 +96,13 @@ class Query {
   contains(col, val) { this.filters.push(['contains', col, val]); return this; }
   ilike() { return this; }
   limit(n) { this._limit = n; return this; }
+  /*
+   * Inclusive on both ends, as PostgREST is. Added for the cron media sweep,
+   * which pages the live-key set explicitly rather than trusting one response
+   * to hold every row -- a truncated live set is what makes it delete files
+   * that are still in use.
+   */
+  range(from, to) { this._range = [from, to]; return this; }
 
   _found() {
     return this.rows.filter(r => matches(r, this.filters));
@@ -122,6 +130,10 @@ class Query {
       return hits;
     }
     const found = this._found();
+    if (this._range) {
+      const [from, to] = this._range;
+      return found.slice(from, to + 1);
+    }
     return this._limit ? found.slice(0, this._limit) : found;
   }
 
@@ -290,7 +302,13 @@ function createFakeSupabase(seed = {}) {
         const out = [];
         for (const id of objects.keys()) {
           if (!id.startsWith(`${bucket}/${prefix}/`)) continue;
-          out.push({ name: id.slice(`${bucket}/${prefix}/`.length), created_at: new Date(0).toISOString() });
+          const obj = objects.get(id);
+          // Honour a seeded created_at so the sweep's grace window is testable;
+          // epoch means "old" for anything that did not set one.
+          out.push({
+            name: id.slice(`${bucket}/${prefix}/`.length),
+            created_at: obj?.created_at || new Date(0).toISOString()
+          });
         }
         return Promise.resolve({ data: out, error: null });
       }

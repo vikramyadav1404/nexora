@@ -510,3 +510,121 @@ describe('login with MFA off', () => {
     expect(res.body.backupCodesRemaining).toBe(0);
   });
 });
+
+describe('a TOTP code is single-use', () => {
+  /*
+   * verifyTotpForUser writes mfa_last_step conditionally --
+   * `.lt('mfa_last_step', step)` -- so whichever of two concurrent requests
+   * writes second matches no rows. It then requested `.select('id')` and
+   * discarded the result, returning `true` regardless, which made the guard
+   * decorative: both requests logged in with the same six-digit code.
+   *
+   * consumeBackupCode a few lines above in the same file has always returned
+   * the row count. This asserts they now agree.
+   */
+  it('REGRESSION: two callers racing the same code -- one wins, one is refused', async () => {
+    await seed({ mfaEnabled: true });
+    const row = { ...userRow() };
+    const c = code();
+
+    // Same stale row, exactly as two in-flight requests would hold.
+    const first = await mfa.verifyTotpForUser(row, c);
+    const second = await mfa.verifyTotpForUser(row, c);
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+  });
+
+  it('REGRESSION: replaying a code after it has been used is refused', async () => {
+    await seed({ mfaEnabled: true });
+    const c = code();
+
+    expect(await mfa.verifyTotpForUser({ ...userRow() }, c)).toBe(true);
+    // Re-read: mfa_last_step has advanced.
+    expect(await mfa.verifyTotpForUser({ ...userRow() }, c)).toBe(false);
+  });
+
+  it('a third replay is refused too', async () => {
+    await seed({ mfaEnabled: true });
+    const row = { ...userRow() };
+    const c = code();
+
+    const results = [];
+    for (let i = 0; i < 3; i++) results.push(await mfa.verifyTotpForUser(row, c));
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it('the login route refuses the replayed code and records a failed attempt', async () => {
+    await seed({ mfaEnabled: true });
+    const body = (await login()).body;
+    const c = code();
+
+    const ok = await request(app()).post('/api/auth/mfa/verify')
+      .send({ mfaToken: body.mfaToken, code: c });
+    expect(ok.status).toBe(200);
+    expect(userRow().mfa_failed_attempts).toBe(0);
+
+    const replay = await request(app()).post('/api/auth/mfa/verify')
+      .send({ mfaToken: body.mfaToken, code: c });
+
+    expect(replay.status).toBe(401);
+    // A rejected code must count against the lockout, not be waved through.
+    expect(userRow().mfa_failed_attempts).toBe(1);
+  });
+});
+
+describe('a backup code is single-use', () => {
+  /*
+   * Not part of the replay fix -- consumeBackupCode always returned its row
+   * count correctly. These exist because the mutation run found nothing
+   * covering redemption at all, on the one credential that bypasses TOTP.
+   *
+   * What they cover is the SELECT filter: the lookup is scoped to
+   * `.is('used_at', null)`, so a code already redeemed is not even a candidate
+   * on the next call.
+   *
+   * What they cannot cover is the conditional update inside the loop. Replacing
+   * its row count with `true` fails none of these, because sequential calls
+   * never reach it -- the SELECT has already excluded the row. That guard is
+   * for two requests interleaving between the SELECT and the UPDATE, which this
+   * fake cannot produce: it is synchronous, so nothing interleaves. Same limit
+   * as the payment race, where the fix was to call the function twice with one
+   * stale read; there is no equivalent here because consumeBackupCode does its
+   * own lookup rather than taking a row.
+   *
+   * Left in place rather than deleted: unreachable-in-test is not the same as
+   * unnecessary, and this one is the difference between a backup code being
+   * single-use and being usable twice under real concurrency.
+   */
+  it('REGRESSION: the same backup code cannot be redeemed twice', async () => {
+    await seed({ mfaEnabled: true });
+    const plain = 'A1B2C3D4E5';
+    db._tables.mfa_backup_codes.push({
+      id: 'bc1',
+      user_id: USER_ID,
+      code_hash: await bcrypt.hash(plain.replace(/-/g, '').toUpperCase(), 10),
+      used_at: null
+    });
+
+    expect(await mfa.consumeBackupCode(USER_ID, plain)).toBe(true);
+    expect(await mfa.consumeBackupCode(USER_ID, plain)).toBe(false);
+  });
+
+  it('a third redemption is refused too', async () => {
+    await seed({ mfaEnabled: true });
+    const plain = 'Z9Y8X7W6V5';
+    db._tables.mfa_backup_codes.push({
+      id: 'bc2',
+      user_id: USER_ID,
+      code_hash: await bcrypt.hash(plain.replace(/-/g, '').toUpperCase(), 10),
+      used_at: null
+    });
+
+    // Sequential, not concurrent -- see the note above.
+    const results = [];
+    for (let i = 0; i < 3; i++) results.push(await mfa.consumeBackupCode(USER_ID, plain));
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+});

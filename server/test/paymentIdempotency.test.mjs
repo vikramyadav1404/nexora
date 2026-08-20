@@ -321,3 +321,69 @@ describe('paid plans are refused when no Razorpay keys are configured', () => {
     expect(res.body.paymentsAvailable).toBe(true);
   });
 });
+
+describe('the webhook finishes its work before it answers', () => {
+  /*
+   * This used to reply `{ received: true }` immediately and activate
+   * afterwards, so a slow Supabase call could not delay the acknowledgement and
+   * make Razorpay redeliver.
+   *
+   * That reasoning holds on a long-running server and fails here. index.js
+   * exports `async (req, res) => readyApp(req, res)`, which settles as soon as
+   * Express dispatches, so Vercel may freeze the function the moment the
+   * response flushes -- and the activation never runs. The webhook exists
+   * precisely to repair a payment the browser callback missed, so it was the
+   * one place that could not afford to be skipped.
+   *
+   * Answering late is safe now because activateSubscription refuses to run
+   * twice: the .eq('status','pending') claim plus migration 013's unique index.
+   * A redelivery re-enters the handler, matches no pending row, activates
+   * nothing.
+   */
+  it('REGRESSION: the subscription is active by the time the response arrives', async () => {
+    const res = await webhookCall();
+
+    expect(res.status).toBe(200);
+    // Asserted on the response, not after a tick: if the work were still
+    // scheduled behind the reply, these would not hold yet.
+    expect(txn().status).toBe('success');
+    expect(buyer().subscription_plan).toBe('gold');
+    expect(res.body.activated).toBe(true);
+  });
+
+  it('REGRESSION: a redelivery of the same payment activates nothing further', async () => {
+    await webhookCall();
+    const expiry = buyer().subscription_expires_at;
+
+    const second = await webhookCall();
+
+    expect(second.status).toBe(200);
+    expect(second.body.activated).toBeUndefined();
+    expect(second.body.alreadyActive).toBe(true);
+    // Stacking is additive now, so a second activation would be visible here.
+    expect(buyer().subscription_expires_at).toBe(expiry);
+  });
+
+  it('an event it does not handle is acknowledged, not left hanging', async () => {
+    const payload = JSON.stringify({ event: 'payment.failed', payload: {} });
+    const res = await request(app())
+      .post('/api/subscriptions/webhook')
+      .set('Content-Type', 'application/json')
+      .set('x-razorpay-signature',
+        crypto.createHmac('sha256', WEBHOOK_SECRET).update(payload).digest('hex'))
+      .send(payload);
+
+    expect(res.status).toBe(200);
+    expect(res.body.ignored).toBe('payment.failed');
+    expect(buyer().subscription_plan).toBe('free');
+  });
+
+  it('an unknown order is acknowledged rather than retried forever', async () => {
+    db._tables.transactions.length = 0;
+
+    const res = await webhookCall();
+
+    expect(res.status).toBe(200);
+    expect(res.body.ignored).toBe('unknown order');
+  });
+});

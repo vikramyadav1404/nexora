@@ -404,16 +404,33 @@ router.post('/webhook', async (req, res) => {
     return res.status(400).json({ message: 'Malformed payload' });
   }
 
-  // Acknowledge fast; Razorpay retries on non-2xx and we don't want a slow
-  // Supabase call to trigger duplicate deliveries.
-  res.json({ received: true });
-
+  /*
+   * The work happens before the acknowledgement, not after.
+   *
+   * This used to answer `{ received: true }` immediately and activate
+   * afterwards, reasoning that a slow reply makes Razorpay retry. That is right
+   * on a long-running server and wrong here: index.js exports
+   * `async (req, res) => readyApp(req, res)`, which settles as soon as Express
+   * dispatches, so Vercel may freeze the function the moment the response
+   * flushes -- and the activation never runs. That is precisely the failure
+   * this webhook exists to repair, so it was the one place it could not afford
+   * to be skipped.
+   *
+   * Acknowledging late is now harmless because activateSubscription refuses to
+   * run twice: the .eq('status', 'pending') claim plus migration 013's unique
+   * index on razorpay_payment_id. A Razorpay retry re-enters this handler,
+   * matches no pending row, and activates nothing. Those two guards are what
+   * make this ordering safe -- removing either brings the double-activation
+   * risk back with it.
+   */
   try {
-    if (event.event !== 'payment.captured' && event.event !== 'order.paid') return;
+    if (event.event !== 'payment.captured' && event.event !== 'order.paid') {
+      return res.json({ received: true, ignored: event.event });
+    }
 
     const payment = event.payload?.payment?.entity || {};
     const orderId = payment.order_id || event.payload?.order?.entity?.id;
-    if (!orderId) return;
+    if (!orderId) return res.json({ received: true, ignored: 'no order id' });
 
     const db = getSupabase();
     const { data: transaction } = await db
@@ -422,7 +439,8 @@ router.post('/webhook', async (req, res) => {
       .eq('razorpay_order_id', orderId)
       .maybeSingle();
 
-    if (!transaction || transaction.status === 'success') return;
+    if (!transaction) return res.json({ received: true, ignored: 'unknown order' });
+    if (transaction.status === 'success') return res.json({ received: true, alreadyActive: true });
 
     const activated = await activateSubscription(db, transaction, {
       paymentId: payment.id || '',
@@ -430,13 +448,37 @@ router.post('/webhook', async (req, res) => {
     });
 
     // The browser callback won the race. It has already activated and emailed.
-    if (!activated) return;
+    if (!activated) return res.json({ received: true, alreadyActive: true });
 
     const { user, expiresAt } = activated;
-    await emailInvoice(user, transaction, expiresAt);
+
+    /*
+     * The invoice is best-effort and must not fail the acknowledgement. The
+     * subscription is already active at this point; a bounced email is not a
+     * reason to make Razorpay redeliver a payment that was handled.
+     */
+    try {
+      await emailInvoice(user, transaction, expiresAt);
+    } catch (mailErr) {
+      console.error('[webhook] invoice email failed:', mailErr.message);
+    }
+
     console.log(`[webhook] activated ${transaction.plan} for user ${transaction.user_id}`);
+    res.json({ received: true, activated: true });
   } catch (err) {
     console.error('[webhook] activation failed:', err.message);
+
+    /*
+     * 500 on purpose, so Razorpay redelivers.
+     *
+     * The old code had already replied 200 before this point, so a failure here
+     * was invisible and the payment was simply never activated. Asking for a
+     * retry is safe now for the same reason the reordering is: the claim guard
+     * makes a redelivery that finds the row already activated a no-op.
+     */
+    if (!res.headersSent) {
+      res.status(500).json({ message: 'Webhook processing failed' });
+    }
   }
 });
 

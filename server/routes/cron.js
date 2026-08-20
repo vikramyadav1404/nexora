@@ -146,12 +146,84 @@ async function weeklyDigest() {
 }
 
 /**
- * Delete profile-media objects no user row points at.
+ * Where the live keys for each media kind actually live.
+ *
+ * This used to be `kind === 'avatar' ? 'avatar_key' : 'cover_key'`, which was
+ * correct for exactly as long as there were two kinds. A third, 'post', was
+ * added to KIND_CONFIG later, and that ternary silently answered 'cover_key'
+ * for it -- so the sweep compared post objects against the set of cover keys,
+ * found no match by construction, and deleted every post attachment in the
+ * bucket. Post keys are recorded in post_media.storage_key (migration 011),
+ * a table this function never consulted.
+ *
+ * An explicit map means a kind added later has no entry, and the sweep skips
+ * that bucket rather than guessing a column. Skipping leaks orphans; guessing
+ * deletes live files. Only one of those is recoverable.
+ */
+const LIVE_KEY_SOURCES = {
+  avatar: { table: 'users', column: 'avatar_key' },
+  cover: { table: 'users', column: 'cover_key' },
+  post: { table: 'post_media', column: 'storage_key' }
+};
+
+/** PostgREST caps a response; page explicitly rather than trusting one call. */
+const LIVE_KEY_PAGE = 1000;
+
+/**
+ * Every key of one kind that something still points at.
+ *
+ * Throws rather than returning a partial set. A caller that treats "I could not
+ * read the live keys" as "there are no live keys" deletes everything, which is
+ * exactly what the discarded error here used to cause: one statement timeout on
+ * this query emptied the set and the sweep removed every avatar and cover on
+ * the platform.
+ */
+async function loadLiveKeys(db, kind) {
+  const source = LIVE_KEY_SOURCES[kind];
+  if (!source) return null; // unknown kind -- caller skips the bucket
+
+  const live = new Set();
+  for (let from = 0; ; from += LIVE_KEY_PAGE) {
+    const { data, error } = await db
+      .from(source.table)
+      .select(source.column)
+      .neq(source.column, '')
+      .range(from, from + LIVE_KEY_PAGE - 1);
+
+    if (error) {
+      throw new Error(`live-key lookup failed for ${kind}: ${error.message}`);
+    }
+
+    for (const row of data || []) {
+      if (row[source.column]) live.add(row[source.column]);
+    }
+
+    // A short page is the last page.
+    if (!data || data.length < LIVE_KEY_PAGE) break;
+  }
+
+  // Avatar thumbnails are derived from the parent key, so they are live too.
+  if (kind === 'avatar') {
+    for (const key of [...live]) {
+      live.add(key.replace(/\.([a-z0-9]+)$/i, '') + '-128.webp');
+    }
+  }
+
+  return live;
+}
+
+/**
+ * Delete media objects nothing points at any more.
  *
  * Two ways these appear: a browser that got a signed upload URL, PUT the file,
  * then closed the tab before calling PATCH, and a `cleanupPrevious` delete that
  * failed after a successful replace. Neither is worth failing a user request
  * over, so they accumulate here instead and get collected once a day.
+ *
+ * Only objects written by the presigned path are in scope -- those use
+ * `users/<id>/<kind>/<uuid>.<ext>` (mediaStorage.buildKey). The older multipart
+ * path writes `<id>/<timestamp>-<rand>.<ext>` instead, which this prefix
+ * listing never sees, so those are neither swept nor collected.
  *
  * This is the one place a bucket listing is acceptable — it runs on a schedule,
  * never on a request path.
@@ -161,21 +233,16 @@ async function sweepOrphanedMedia() {
   const db = getSupabase();
   let removed = 0;
   let scanned = 0;
+  const skipped = [];
 
   for (const [kind, { bucket }] of Object.entries(KIND_CONFIG)) {
-    const keyColumn = kind === 'avatar' ? 'avatar_key' : 'cover_key';
+    const live = await loadLiveKeys(db, kind);
 
-    const { data: rows } = await db
-      .from('users')
-      .select(keyColumn)
-      .neq(keyColumn, '');
-    const live = new Set((rows || []).map(r => r[keyColumn]).filter(Boolean));
-
-    // Avatar thumbnails are derived from the parent key, so they are live too.
-    if (kind === 'avatar') {
-      for (const key of [...live]) {
-        live.add(key.replace(/\.([a-z0-9]+)$/i, '') + '-128.webp');
-      }
+    if (live === null) {
+      // A kind nothing knows how to resolve. Leaving its objects alone is the
+      // only safe answer -- see LIVE_KEY_SOURCES.
+      skipped.push(kind);
+      continue;
     }
 
     const { data: users } = await db.from('users').select('id').limit(1000);
@@ -196,7 +263,7 @@ async function sweepOrphanedMedia() {
     }
   }
 
-  return { scanned, removed };
+  return skipped.length ? { scanned, removed, skipped } : { scanned, removed };
 }
 
 /* ── routes ──────────────────────────────────────────────── */
@@ -297,3 +364,7 @@ router.post('/sweep-rate-limits', async (req, res) => {
 });
 
 module.exports = router;
+
+// Exported for test/cronSweep.test.mjs. This job deletes things nobody can get
+// back, so it needs to be reachable directly rather than only through the route.
+module.exports.__sweepOrphanedMedia = sweepOrphanedMedia;

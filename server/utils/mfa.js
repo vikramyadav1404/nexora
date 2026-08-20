@@ -299,7 +299,7 @@ async function verifyTotpForUser(userRow, code) {
   const step = verifyCode(secret, code, { afterStep: Number(userRow.mfa_last_step || 0) });
   if (step === null) return false;
 
-  const { error } = await getSupabase()
+  const { data: claimed, error } = await getSupabase()
     .from('users')
     .update({ mfa_last_step: step })
     .eq('id', userRow.id)
@@ -309,7 +309,19 @@ async function verifyTotpForUser(userRow, code) {
     .select('id');
 
   if (error) throw error;
-  return true;
+
+  /*
+   * The row count is the answer, not a formality.
+   *
+   * This used to request .select('id') and then `return true` regardless, so
+   * the guard above was decorative: two concurrent verifications of the same
+   * six-digit code both succeeded, because the loser matched no rows and said
+   * so to nobody. A TOTP code is meant to be usable once.
+   *
+   * consumeBackupCode a few lines up has always done this correctly -- same
+   * shape, same reason.
+   */
+  return (claimed || []).length > 0;
 }
 
 /** Turn MFA off and destroy the material behind it. */
