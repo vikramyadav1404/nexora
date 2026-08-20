@@ -554,6 +554,25 @@ export default function Feed() {
     []
   );
 
+  /*
+   * What happens after a post lands, whichever route it took.
+   *
+   * The presign path and the multipart fallback each ran this same eight-line
+   * sequence. Two copies of "clear the composer and refresh" is two places to
+   * forget a step when one is added -- and the fallback is the path nobody
+   * exercises day to day, so it is the copy that would rot.
+   */
+  const onPostPublished = useCallback((post, postsToday) => {
+    setPosts((prev) => [post, ...prev]);
+    setContent('');
+    setMedia([]);
+    setPostsToday(postsToday);
+    setComposerOpen(false);
+    haptic(12);
+    toast.success('Post published');
+    refreshUser();
+  }, [refreshUser]);
+
   const handlePost = async () => {
     if (!content.trim() && media.length === 0) return;
     setPosting(true);
@@ -592,14 +611,7 @@ export default function Feed() {
         mediaKeys: keys
       });
 
-      setPosts((prev) => [res.data.post, ...prev]);
-      setContent('');
-      setMedia([]);
-      setPostsToday(res.data.postsToday);
-      setComposerOpen(false);
-      haptic(12);
-      toast.success('Post published');
-      refreshUser();
+      onPostPublished(res.data.post, res.data.postsToday);
     } catch (err) {
       /*
        * A deployment with no storage configured answers presign with 503. That
@@ -619,14 +631,7 @@ export default function Feed() {
             }
           });
 
-          setPosts((prev) => [res.data.post, ...prev]);
-          setContent('');
-          setMedia([]);
-          setPostsToday(res.data.postsToday);
-          setComposerOpen(false);
-          haptic(12);
-          toast.success('Post published');
-          refreshUser();
+          onPostPublished(res.data.post, res.data.postsToday);
           return;
         } catch (fallbackErr) {
           toast.error(fallbackErr.response?.data?.message || 'Failed to post');

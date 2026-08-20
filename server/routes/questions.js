@@ -2,22 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const {
-  isToday, getDailyQuestionLimit, shapeQuestion, shapeAnswer, shapeAuthor, authorFields
+  isToday, getDailyQuestionLimit, shapeQuestion, shapeAnswer, shapeAuthor, authorFields,
+  getVoteLists
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { sendError, asyncHandler } = require('../utils/respond');
 const { claimDailyQuota } = require('../utils/quota');
-
-async function getVoteLists(db, table, idCol, id) {
-  const { data } = await db.from(table).select('user_id, vote_type').eq(idCol, id);
-  const upvotes = [];
-  const downvotes = [];
-  (data || []).forEach(v => {
-    if (v.vote_type === 'up') upvotes.push(v.user_id);
-    else downvotes.push(v.user_id);
-  });
-  return { upvotes, downvotes };
-}
 
 // GET /api/questions
 router.get('/', protect, asyncHandler(async (req, res) => {

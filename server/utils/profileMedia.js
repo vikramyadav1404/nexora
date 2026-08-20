@@ -51,12 +51,23 @@ const NOT_AN_IMAGE = 'That file is not a JPEG, PNG or WebP image';
  *
  * Called exactly once per attach. Nothing here lists the bucket.
  */
-async function verifyUpload({ key, kind, userId }) {
+/**
+ * Resolve an uploaded object after checking it belongs to the caller.
+ *
+ * The ownership gate and the stat lookup are the same for profile media and
+ * post media, and the 403 message must stay byte-identical across both: it is
+ * deliberately the same whether the key is malformed, belongs to somebody else,
+ * or is nonsense, because a different message would confirm which. That is a
+ * security property, and it was previously maintained by two separate copies
+ * with two separate comments explaining it.
+ *
+ * Size limits stay with the callers -- they differ, and post media additionally
+ * rejects empty objects before sniffing their bytes.
+ */
+async function resolveUploadedObject({ key, userId, kind }) {
   const { bucket, maxBytes } = configFor(kind);
 
   if (!keyBelongsTo(key, userId, kind)) {
-    // Deliberately the same message whether the key is malformed or belongs to
-    // somebody else — the difference would confirm another user's key exists.
     throw new MediaError(403, 'That upload does not belong to you');
   }
 
@@ -64,6 +75,12 @@ async function verifyUpload({ key, kind, userId }) {
   if (!stat) {
     throw new MediaError(404, 'No uploaded file found for that key');
   }
+
+  return { bucket, maxBytes, stat };
+}
+
+async function verifyUpload({ key, kind, userId }) {
+  const { bucket, maxBytes, stat } = await resolveUploadedObject({ key, userId, kind });
 
   if (stat.size > maxBytes) {
     throw new MediaError(
@@ -178,6 +195,7 @@ async function cleanupPrevious({ kind, previousKey }) {
 
 module.exports = {
   MediaError,
+  resolveUploadedObject,
   verifyUpload,
   buildDerivatives,
   cleanupPrevious,

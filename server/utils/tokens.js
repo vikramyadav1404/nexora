@@ -116,15 +116,21 @@ function clearRefreshCookie(res) {
   res.clearCookie(REFRESH_COOKIE, { ...refreshCookieOptions(), maxAge: undefined });
 }
 
-/** Issue a brand-new session. Used by register, login, and MFA verify. */
-async function issueSession(userId, { userAgent = '', ip = '' } = {}) {
-  const refresh = newRefreshToken();
-
-  const { data, error } = await getSupabase()
+/**
+ * Record a refresh token and return its row id.
+ *
+ * Issuing a session and rotating one both write this row, and both must write
+ * it the same way -- the hash rather than the token, the same expiry window,
+ * the same truncation on the two attacker-controlled strings. Two copies meant
+ * a change to any of those had to be made twice, and the rotation copy is the
+ * one that matters most.
+ */
+async function insertRefreshRow(db, { userId, token, userAgent, ip }) {
+  const { data, error } = await db
     .from('refresh_tokens')
     .insert({
       user_id: userId,
-      token_hash: hashToken(refresh),
+      token_hash: hashToken(token),
       expires_at: refreshExpiry().toISOString(),
       user_agent: String(userAgent).slice(0, 300),
       ip: String(ip).slice(0, 60)
@@ -133,8 +139,17 @@ async function issueSession(userId, { userAgent = '', ip = '' } = {}) {
     .single();
 
   if (error) throw error;
+  return data.id;
+}
 
-  return { accessToken: signAccessToken(userId), refreshToken: refresh, refreshId: data.id };
+/** Issue a brand-new session. Used by register, login, and MFA verify. */
+async function issueSession(userId, { userAgent = '', ip = '' } = {}) {
+  const refresh = newRefreshToken();
+  const refreshId = await insertRefreshRow(getSupabase(), {
+    userId, token: refresh, userAgent, ip
+  });
+
+  return { accessToken: signAccessToken(userId), refreshToken: refresh, refreshId };
 }
 
 /** Revoke every outstanding token for a user. */
@@ -207,24 +222,15 @@ async function rotateRefreshToken(presented, { userAgent = '', ip = '' } = {}) {
   }
 
   const next = newRefreshToken();
-  const { data: created, error: insertErr } = await db
-    .from('refresh_tokens')
-    .insert({
-      user_id: row.user_id,
-      token_hash: hashToken(next),
-      expires_at: refreshExpiry().toISOString(),
-      user_agent: String(userAgent).slice(0, 300),
-      ip: String(ip).slice(0, 60)
-    })
-    .select('id')
-    .single();
-  if (insertErr) throw insertErr;
+  const createdId = await insertRefreshRow(db, {
+    userId: row.user_id, token: next, userAgent, ip
+  });
 
   // Retire the presented token only after its successor exists, so a failure
   // between the two leaves the caller with a token that still works.
   const { error: revokeErr } = await db
     .from('refresh_tokens')
-    .update({ revoked_at: new Date().toISOString(), replaced_by: created.id })
+    .update({ revoked_at: new Date().toISOString(), replaced_by: createdId })
     .eq('id', row.id);
   if (revokeErr) throw revokeErr;
 

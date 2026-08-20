@@ -22,12 +22,9 @@
  *     Supabase dashboard and the presign rate limiter are what bound the abuse;
  *     the daily sweep removes anything never attached.
  */
-const { MediaError } = require('./profileMedia');
+const { MediaError, resolveUploadedObject } = require('./profileMedia');
 const { SNIFF_LENGTH, sniffImageType, sniffVideoType } = require('./magicBytes');
 const {
-  configFor,
-  keyBelongsTo,
-  statObject,
   readRange,
   getPublicUrl,
   POST_ALLOWED_MIME
@@ -57,18 +54,7 @@ function classify(prefix) {
  * @returns {Promise<{ key, bucket, url, type, contentType, size }>}
  */
 async function verifyPostUpload({ key, userId }) {
-  const { bucket, maxBytes } = configFor('post');
-
-  if (!keyBelongsTo(key, userId, 'post')) {
-    // Deliberately identical whether the key is malformed, belongs to another
-    // user, or is nonsense — a different message would confirm which.
-    throw new MediaError(403, 'That upload does not belong to you');
-  }
-
-  const stat = await statObject(bucket, key);
-  if (!stat) {
-    throw new MediaError(404, 'No uploaded file found for that key');
-  }
+  const { bucket, maxBytes, stat } = await resolveUploadedObject({ key, userId, kind: 'post' });
 
   if (stat.size === 0) {
     throw new MediaError(400, 'That upload is empty');

@@ -106,6 +106,24 @@ async function comparePassword(plain, hash) {
   }
 }
 
+/**
+ * Split a vote table into upvoter and downvoter id lists.
+ *
+ * Lived in both questions.js and answers.js -- answers.js held a copy with
+ * 'answer_votes' and 'answer_id' hardcoded, so the two could drift while
+ * looking identical. The generic form covers both callers.
+ */
+async function getVoteLists(db, table, idCol, id) {
+  const { data } = await db.from(table).select('user_id, vote_type').eq(idCol, id);
+  const upvotes = [];
+  const downvotes = [];
+  (data || []).forEach(v => {
+    if (v.vote_type === 'up') upvotes.push(v.user_id);
+    else downvotes.push(v.user_id);
+  });
+  return { upvotes, downvotes };
+}
+
 // turn a users table row into what the frontend expects
 /**
  * The only thing that turns a users row into a response body.
@@ -377,6 +395,7 @@ module.exports = {
   isToday,
   computeBadges,
   getActivePlan,
+  getVoteLists,
   getDailyQuestionLimit,
   getDailyPostLimit,
   hashPassword,

@@ -16,10 +16,16 @@ async function getFriendIds(db, userId) {
   return (data || []).map(r => r.friend_id);
 }
 
-async function getUsersByIds(db, ids) {
-  if (!ids.length) return [];
-  const { data } = await db.from('users').select(withMediaColumns('id, name, avatar, email, points, badges')).in('id', ids);
-  return (data || []).map(u => ({
+/**
+ * The lightweight person shape used by friend lists, suggestions and people
+ * search -- distinct from shapeUser, which is the full self/profile payload.
+ *
+ * getUsersByIds and the people-search mapper each built this object literal
+ * separately and identically, so a field added to one silently produced two
+ * different shapes on endpoints the same page consumes.
+ */
+function shapePerson(u) {
+  return {
     _id: u.id,
     id: u.id,
     name: u.name,
@@ -29,7 +35,33 @@ async function getUsersByIds(db, ids) {
     email: u.email,
     points: u.points,
     badges: u.badges || []
-  }));
+  };
+}
+
+/**
+ * Apply a patch to the caller's own row and hand back the updated record.
+ *
+ * The four-line PostgREST chain plus `if (error) throw` appeared four times in
+ * this file -- once per profile, avatar, cover and media route. Identical every
+ * time, and every one of them scoped to req.user.id, which is the part that
+ * must not be got wrong.
+ */
+async function updateSelf(db, userId, updates) {
+  const { data: row, error } = await db
+    .from('users')
+    .update(updates)
+    .eq('id', userId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return row;
+}
+
+async function getUsersByIds(db, ids) {
+  if (!ids.length) return [];
+  const { data } = await db.from('users').select(withMediaColumns('id, name, avatar, email, points, badges')).in('id', ids);
+  return (data || []).map(shapePerson);
 }
 
 const PEOPLE_SEARCH_LIMIT = 10;
@@ -39,17 +71,7 @@ const PEOPLE_FIELDS = 'id, name, avatar, email, points, badges';
 let peopleRpcWarned = false;
 
 /** The response shape Settings.jsx reads. Unchanged by the move to ranking. */
-const shapeResult = (u) => ({
-  _id: u.id,
-  id: u.id,
-  name: u.name,
-  avatar: u.avatar,
-  avatarUrl: u.avatar,
-  avatarThumbUrl: u.avatar_thumb_url || u.avatar,
-  email: u.email,
-  points: u.points,
-  badges: u.badges || []
-});
+const shapeResult = shapePerson;
 
 /**
  * GET /api/users/search?q=
@@ -157,14 +179,7 @@ router.post('/onboarding', protect, asyncHandler(async (req, res) => {
   }
 
   const db = getSupabase();
-  const { data: row, error } = await db
-    .from('users')
-    .update(updates)
-    .eq('id', req.user.id)
-    .select()
-    .single();
-
-  if (error) throw error;
+  const row = await updateSelf(db, req.user.id, updates);
 
   // Generate interest feed + auto-follow related creators
   const seed = await ensureInterestContent(req.user.id, normalized);
@@ -323,14 +338,7 @@ router.put('/profile', protect, asyncHandler(async (req, res) => {
   if (bio !== undefined) updates.bio = sanitizeText(bio, 500);
   if (phone !== undefined) updates.phone = sanitizeText(phone, 30);
 
-  const { data: row, error } = await getSupabase()
-    .from('users')
-    .update(updates)
-    .eq('id', req.user.id)
-    .select()
-    .single();
-
-  if (error) throw error;
+  const row = await updateSelf(getSupabase(), req.user.id, updates);
   res.json({ user: shapeUser(row) });
 }, "Could not complete that request"));
 
@@ -368,14 +376,7 @@ async function attachMedia(req, res, kind) {
 
     const updates = await buildDerivatives({ bucket, key, kind });
 
-    const { data: row, error } = await db
-      .from('users')
-      .update(updates)
-      .eq('id', req.user.id)
-      .select()
-      .single();
-
-    if (error) throw error;
+    const row = await updateSelf(db, req.user.id, updates);
 
     if (previousKey && previousKey !== key) {
       await cleanupPrevious({ kind, previousKey });
@@ -405,14 +406,7 @@ async function removeMedia(req, res, kind) {
     const updates = { [cols.url]: '', [cols.key]: '' };
     for (const col of cols.extra) updates[col] = '';
 
-    const { data: row, error } = await db
-      .from('users')
-      .update(updates)
-      .eq('id', req.user.id)
-      .select()
-      .single();
-
-    if (error) throw error;
+    const row = await updateSelf(db, req.user.id, updates);
 
     await cleanupPrevious({ kind, previousKey });
 

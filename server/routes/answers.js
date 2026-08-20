@@ -2,22 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const {
-  computeBadges, shapeAnswer, shapeAuthor, authorFields
+  computeBadges, shapeAnswer, shapeAuthor, authorFields, getVoteLists
 } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { pushNotification, touchUserActivity } = require('../db/features');
 const { sendError, asyncHandler } = require('../utils/respond');
-
-async function getVoteLists(db, answerId) {
-  const { data } = await db.from('answer_votes').select('user_id, vote_type').eq('answer_id', answerId);
-  const upvotes = [];
-  const downvotes = [];
-  (data || []).forEach(v => {
-    if (v.vote_type === 'up') upvotes.push(v.user_id);
-    else downvotes.push(v.user_id);
-  });
-  return { upvotes, downvotes };
-}
 
 // POST /api/answers/:questionId
 router.post('/:questionId', protect, asyncHandler(async (req, res) => {
@@ -113,7 +102,7 @@ router.post('/:id/vote', protect, asyncHandler(async (req, res) => {
         totalUpvotes += 1;
       }
 
-      const votes = await getVoteLists(db, answerId);
+      const votes = await getVoteLists(db, 'answer_votes', 'answer_id', answerId);
       if (votes.upvotes.length >= 5 && !bonusAwarded) {
         points += 5;
         bonusAwarded = true;
@@ -144,7 +133,7 @@ router.post('/:id/vote', protect, asyncHandler(async (req, res) => {
     badges
   }).eq('id', author.id);
 
-  const votes = await getVoteLists(db, answerId);
+  const votes = await getVoteLists(db, 'answer_votes', 'answer_id', answerId);
   res.json({ upvotes: votes.upvotes.length, downvotes: votes.downvotes.length });
 }, "Could not complete that request"));
 
