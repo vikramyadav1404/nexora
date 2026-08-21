@@ -82,6 +82,16 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 app.use('/api', apiLimiter);
 
 const appVersion = require('./version');
+/*
+ * Identifies the running build in one request.
+ *
+ * This returned a static '1.0.0' for every deploy ever made, so answering
+ * "what is in production" meant sending a request only the new code responds to
+ * differently -- and that guessing was wrong twice. `commit` is null rather
+ * than a placeholder when the deploy was not stamped: an unknown commit and a
+ * known one must not read alike. `deploymentId` comes from the platform and is
+ * correct even when the stamp is missing.
+ */
 app.get('/api/version', (req, res) => {
   res.json({
     ...appVersion,

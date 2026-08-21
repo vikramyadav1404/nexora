@@ -15,7 +15,9 @@
     "test:email": "node scripts/testEmail.js",
     "backup": "node scripts/backup.js",
     "migration:runner": "node scripts/build-migration-runner.js",
-    "keepalive": "node -e \"require('dotenv').config();fetch((process.env.PUBLIC_API_URL||'http://localhost:5000')+'/api/cron/keepalive').then(r=>r.json()).then(j=>console.log(j)).catch(e=>console.error(e.message))\""
+    "keepalive": "node -e \"require('dotenv').config();fetch((process.env.PUBLIC_API_URL||'http://localhost:5000')+'/api/cron/keepalive').then(r=>r.json()).then(j=>console.log(j)).catch(e=>console.error(e.message))\"",
+    "stamp": "node scripts/stamp-version.js",
+    "deploy": "npm run stamp && vercel deploy --prod --yes"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
