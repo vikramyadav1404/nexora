@@ -857,8 +857,19 @@ router.post('/change-password', protect, sensitiveLimiter, asyncHandler(async (r
   res.json({ message: 'Password changed successfully', token: accessToken });
 }, "Authentication failed"));
 
-// POST /api/auth/generate-password
-router.post('/generate-password', (req, res) => {
+/*
+ * POST /api/auth/generate-password
+ *
+ * Rate-limited like the other pre-auth endpoints on the same page. It cannot
+ * take `protect` -- ForgotPassword.jsx calls it before login, which is the
+ * point of it -- and sensitiveLimiter at 10/hour would break clicking "suggest"
+ * a few times while choosing a password.
+ *
+ * It stopped being a PRNG oracle when generatePassword moved to
+ * crypto.randomInt; what remains is unauthenticated CPU that anyone can drive,
+ * and authLimiter is the same answer login and register already use.
+ */
+router.post('/generate-password', authLimiter, (req, res) => {
   res.json({ password: generatePassword(12) });
 });
 

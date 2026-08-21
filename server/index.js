@@ -97,7 +97,7 @@ app.use(require('cookie-parser')());
 // One structured JSON line per request, carrying a request id that sendError
 // reuses — so a user quoting an id can be traced to the exact failure.
 const { requestLogger } = require('./utils/observability');
-const { isDev } = require('./utils/respond');
+const { isDev, sendError } = require('./utils/respond');
 app.use(requestLogger);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
   maxAge: process.env.NODE_ENV === 'production' ? '1d' : 0,
@@ -225,10 +225,10 @@ async function startServer(opts = {}) {
 
     app.use('/api', require('./routes/demo'));
 
-    app.use((err, req, res, next) => {
-      console.error('API error:', err.message);
-      res.status(500).json({ message: err.message || 'Server error' });
-    });
+    // Same handler as the real path -- see the note there. Demo mode has no
+    // real data, but it has the same routes, and a second implementation is
+    // how the two drift.
+    app.use((err, req, res, next) => sendError(res, err, req));
 
     if (shouldListen) {
       app.listen(PORT, () => {
@@ -344,14 +344,29 @@ async function startServer(opts = {}) {
     res.status(404).json({ message: `API route not found: ${req.method} ${req.originalUrl}` });
   });
 
+  /*
+   * Everything that reaches Express's error path goes through sendError.
+   *
+   * This returned err.message verbatim, which for a PostgREST or Postgres
+   * failure is raw database text -- table names, column names, constraint
+   * names. utils/respond.js already decides what is safe to surface, and
+   * asyncHandler already routes through it, so the obvious reading was that
+   * this handler was unreachable.
+   *
+   * It is not. Fifteen real routes are not wrapped in asyncHandler and land
+   * here: all five of ai.js, all four of cron.js, five in users.js, three in
+   * auth.js, two in subscriptions.js, one in posts.js. A handler that is only
+   * correct on the wrapped routes is the same partial-coverage problem that
+   * produced the bug -- so the fix is one decision covering both paths, rather
+   * than a list of routes to keep in sync. The list is what went stale.
+   *
+   * sendError keeps isSafeSetupError, so a genuine schema or configuration
+   * problem still surfaces as a 503 with its message; everything else becomes a
+   * generic message plus a requestId the user can quote.
+   */
   app.use((err, req, res, next) => {
     const status = err.status || err.statusCode || 500;
-    if (status >= 500) console.error('API error:', err.message);
-    else console.warn('API client error:', err.message);
-    res.status(status).json({
-      message: err.message || 'Server error',
-      ...(isDev() && err.stack ? { stack: err.stack } : {})
-    });
+    sendError(res, err, req, 'Something went wrong on our end', status);
   });
 
   if (shouldListen) {
