@@ -101,11 +101,32 @@ export async function renderCrop(file, kind, crop) {
  * storage recomputes the signature over the headers, and an extra one is a 403
  * that reads like a permissions problem but is really a header mismatch.
  */
+/*
+ * How long a stalled PUT is allowed to hang.
+ *
+ * xhr.ontimeout was already written below, but xhr.timeout was never assigned
+ * and the XHR default is 0 -- no timeout at all -- so that handler was dead
+ * code. axios.defaults.timeout does not reach here either; this is a raw XHR
+ * straight to storage, deliberately, because axios cannot report upload
+ * progress the way this needs.
+ *
+ * A stalled connection therefore never settled the promise. Feed's composer
+ * spun forever with the text and attachments unrecoverable, and the avatar
+ * cropper stuck on 'uploading' with no way out but a reload.
+ *
+ * Two minutes rather than something tight: a 40MB video on a slow mobile
+ * connection is a legitimate upload, and the progress events below mean a
+ * healthy-but-slow transfer is visible while it happens. This is the ceiling
+ * for a connection that has stopped moving, not a target.
+ */
+const UPLOAD_TIMEOUT_MS = 120000;
+
 function putToStorage(signedUrl, blob, contentType, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', signedUrl, true);
     xhr.setRequestHeader('Content-Type', contentType);
+    xhr.timeout = UPLOAD_TIMEOUT_MS;
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {

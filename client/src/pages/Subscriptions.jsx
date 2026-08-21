@@ -6,26 +6,61 @@ import { useAuth } from '../contexts/AuthContext';
 import { Check, Zap, Shield, AlertTriangle, Receipt, RefreshCw, Gift } from 'lucide-react';
 import { ErrorState } from '../components/ui';
 
+const RAZORPAY_SRC = 'https://checkout.razorpay.com/v1/checkout.js';
+const RAZORPAY_TIMEOUT_MS = 15000;
+
+/**
+ * The in-flight load, so concurrent callers share one script tag.
+ *
+ * This used to be inferred from the DOM, and that is where the bug was: if a
+ * tag existed the loader attached fresh load/error listeners to it and
+ * returned. For a tag whose first load had FAILED, the error event had already
+ * fired and the tag was never removed -- so those listeners never fired either
+ * and the promise never settled. handleSubscribe's `finally` never ran,
+ * `loading` stayed true, and every Subscribe and Trial button was disabled
+ * until a full page reload, with no message to the user and nothing logged.
+ *
+ * One CDN hiccup and nobody could subscribe. Holding the promise here instead
+ * of re-reading the DOM means a failure is a rejection that clears itself, and
+ * the next click genuinely retries.
+ */
+let razorpayLoad = null;
+
 function loadRazorpayScript() {
-  return new Promise((resolve, reject) => {
-    if (window.Razorpay) {
-      resolve();
-      return;
-    }
-    const existing = document.querySelector('script[data-nexora-razorpay]');
-    if (existing) {
-      existing.addEventListener('load', () => resolve());
-      existing.addEventListener('error', () => reject(new Error('Razorpay failed to load')));
-      return;
-    }
+  if (window.Razorpay) return Promise.resolve();
+  if (razorpayLoad) return razorpayLoad;
+
+  razorpayLoad = new Promise((resolve, reject) => {
+    // Any tag from a previous attempt is dead to us -- its events have already
+    // fired. Remove it so this attempt starts clean.
+    document.querySelectorAll('script[data-nexora-razorpay]').forEach(el => el.remove());
+
     const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.src = RAZORPAY_SRC;
     script.async = true;
     script.dataset.nexoraRazorpay = '1';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Razorpay failed to load'));
+
+    // A script that never fires either event -- a captive portal, a hung TLS
+    // handshake -- would otherwise hang the promise for the tab's lifetime.
+    const timer = setTimeout(() => {
+      script.remove();
+      reject(new Error('Razorpay checkout timed out loading'));
+    }, RAZORPAY_TIMEOUT_MS);
+
+    script.onload = () => { clearTimeout(timer); resolve(); };
+    script.onerror = () => {
+      clearTimeout(timer);
+      script.remove();
+      reject(new Error('Razorpay checkout failed to load'));
+    };
+
     document.body.appendChild(script);
   });
+
+  // Clear on failure so the next attempt is a real retry rather than a replay
+  // of the same rejected promise.
+  razorpayLoad.catch(() => { razorpayLoad = null; });
+  return razorpayLoad;
 }
 
 const PLANS = [
@@ -58,6 +93,9 @@ export default function Subscriptions() {
   const [tab, setTab] = useState('plans');
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  // Set when the Razorpay script itself could not be fetched, so the page can
+  // say so rather than leaving the buttons looking broken.
+  const [checkoutBlocked, setCheckoutBlocked] = useState(false);
 
   // Null until /plans answers, so the buttons are not briefly enabled on load.
   const [paymentsAvailable, setPaymentsAvailable] = useState(null);
@@ -89,6 +127,7 @@ export default function Subscriptions() {
     // Payment window no longer blocks subscribe (always open unless server enforces it)
 
     setLoading(true);
+    setCheckoutBlocked(false);
     try {
       const res = await axios.post('/api/subscriptions/create-order', { plan: planId });
       const { orderId, amount, keyId, transactionId, isMock } = res.data;
@@ -134,7 +173,23 @@ export default function Subscriptions() {
       const rzp = new window.Razorpay(options);
       rzp.open();
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to initiate payment');
+      /*
+       * A checkout that cannot load is a lost sale, and it used to be silent on
+       * both ends -- the promise hung, so this catch never ran either. It is
+       * separated from an ordinary API failure because the causes and the
+       * remedies differ: one is our server, the other is a third-party CDN the
+       * user may be able to get past by retrying.
+       */
+      if (err?.message?.includes('Razorpay checkout')) {
+        setCheckoutBlocked(true);
+        // console.error rather than a swallow: this is the line to alert on,
+        // and it is the only signal that checkout is unreachable. The
+        // ErrorBoundary uses the same channel.
+        console.error('[checkout] Razorpay script unavailable:', err.message);
+        toast.error('Could not open checkout. Check your connection and try again.');
+      } else {
+        toast.error(err.response?.data?.message || 'Failed to initiate payment');
+      }
     } finally {
       setLoading(false);
     }
@@ -259,6 +314,14 @@ export default function Subscriptions() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {checkoutBlocked && (
+              <div className="alert alert-warning" style={{ maxWidth: 560, margin: '0 auto 16px', justifyContent: 'center', textAlign: 'center' }}>
+                <AlertTriangle size={16} />
+                Checkout could not load. This is usually a network or ad-blocker
+                issue rather than a problem with your account &mdash; try again.
               </div>
             )}
 
