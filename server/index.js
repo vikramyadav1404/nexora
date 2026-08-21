@@ -8,6 +8,8 @@ const fs = require('fs');
 const { apiLimiter } = require('./middleware/rateLimit');
 const { setMediaColumnSupport } = require('./db/helpers');
 const { shouldUseDemoMode, mayPublishDemoLogin } = require('./utils/demoMode');
+const { assertJwtSecret } = require('./utils/tokens');
+const { isAllowedOrigin, allowedOrigins } = require('./utils/corsOrigins');
 
 dotenv.config();
 
@@ -36,23 +38,45 @@ app.use(helmet({
 
 app.use(compression());
 
-// CORS — allow client origin(s)
-const clientOrigins = (process.env.CLIENT_URL || 'http://localhost:5173')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
+/*
+ * CORS — an exact allowlist, because this sends credentials.
+ *
+ * This used to allow any origin matching /\.vercel\.app$/i. Anyone can deploy
+ * to attacker-xyz.vercel.app, so with `credentials: true` that let an arbitrary
+ * site make credentialed cross-origin requests the browser would let it READ.
+ * Verified against production before changing it: an unrelated .vercel.app
+ * origin was echoed back in Access-Control-Allow-Origin.
+ *
+ * What limited the damage was accident, not design -- the access token travels
+ * in an Authorization header rather than a cookie, and the refresh cookie is
+ * SameSite=Strict scoped to /api/auth. Both are one refactor from changing, and
+ * a rule this permissive should not be what stands behind them.
+ *
+ * localhost is now development-only. It was matched in production too, where no
+ * legitimate localhost origin exists.
+ *
+ * CORS_EXTRA_ORIGINS is the escape hatch for preview deployments: explicit
+ * origins someone typed out, rather than a pattern matching an entire hosting
+ * platform.
+ */
+// Warn once per origin. Without this a CORS misconfiguration is invisible on
+// the server and presents as an unexplained client bug.
+const rejectedOrigins = new Set();
 
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin || clientOrigins.includes(origin) || clientOrigins.includes('*')) {
-      return cb(null, true);
-    }
-    if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
-      return cb(null, true);
-    }
-    // Allow any vercel.app preview/production host for this project
-    if (/\.vercel\.app$/i.test(origin || '')) {
-      return cb(null, true);
+    // No Origin header: same-origin, curl, server-to-server. Not a CORS case.
+    if (isAllowedOrigin(origin)) return cb(null, true);
+
+    if (!rejectedOrigins.has(origin)) {
+      rejectedOrigins.add(origin);
+      console.warn(JSON.stringify({
+        level: 'warn',
+        event: 'cors-rejected',
+        origin,
+        allowed: allowedOrigins(),
+        hint: 'Add it to CLIENT_URL or CORS_EXTRA_ORIGINS if this is legitimate'
+      }));
     }
     return cb(null, false);
   },
@@ -160,7 +184,17 @@ async function startServer(opts = {}) {
     process.env.PUBLIC_API_URL = `https://${process.env.VERCEL_URL}`;
   }
 
+  /*
+   * Before anything else. A server that cannot sign a session correctly should
+   * not start and look healthy -- the same reasoning as refusing the silent
+   * demo-mode fallback below.
+   *
+   * Demo mode is exempt: routes/demo.js signs with its own secret and holds no
+   * real user data, so requiring a production-strength JWT_SECRET to run a
+   * local demo would be friction with no security value.
+   */
   const demoMode = shouldUseDemoMode();
+  if (!demoMode) assertJwtSecret();
 
   if (demoMode) {
     const { initDemoStore } = require('./db/demoStore');

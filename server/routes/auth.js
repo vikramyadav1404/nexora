@@ -7,7 +7,7 @@ const {
   hashPassword, comparePassword, shapeUser, isToday, computeBadges,
   withMediaColumns
 } = require('../db/helpers');
-const { protect } = require('../middleware/auth');
+const { protect, verifyAccessToken, bearerToken } = require('../middleware/auth');
 const { sendEmail, generatePassword, generateOTP } = require('../utils/email');
 const { pushNotification } = require('../db/features');
 const { authLimiter, sensitiveLimiter } = require('../middleware/rateLimit');
@@ -299,14 +299,23 @@ router.post('/logout', asyncHandler(async (req, res) => {
   const presented = req.cookies?.[REFRESH_COOKIE];
 
   if (req.body?.all) {
-    const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
-    try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev_insecure_jwt');
-      if (decoded?.id) await revokeFamily(decoded.id);
-    } catch {
+    /*
+     * The same validation protect uses, not a second hand-rolled one.
+     *
+     * This verified the token inline and skipped two checks the middleware
+     * performs. It accepted typ: 'mfa_pending' -- issued after a correct
+     * password but before the second factor -- so someone holding a stolen
+     * password and blocked by MFA could still log the victim out of every
+     * session, repeatedly. It also fell back to a hardcoded secret.
+     *
+     * Revoking every session is a bigger action than most routes take, so it
+     * has no business accepting a weaker token than they do.
+     */
+    const result = verifyAccessToken(bearerToken(req));
+    if (!result.ok) {
       return res.status(401).json({ message: 'Not authorized' });
     }
+    await revokeFamily(result.decoded.id);
   } else {
     await revokeRefreshToken(presented);
   }

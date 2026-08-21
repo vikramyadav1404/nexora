@@ -31,8 +31,58 @@ const TOKEN_TYPE_MFA_PENDING = 'mfa_pending';
  */
 const MFA_PENDING_TTL = '5m';
 
+/**
+ * The signing secret. No fallback, deliberately.
+ *
+ * This returned 'dev_insecure_jwt' when JWT_SECRET was unset -- a string
+ * published in this repository -- and it is the function that SIGNS access
+ * tokens. middleware/auth.js fails closed on a missing secret, so a deployment
+ * without the variable would 500 on protected routes; but /login would still
+ * have issued tokens anyone could forge, for any user id. The failure was
+ * silent where it mattered and loud only where it did not.
+ *
+ * Throwing means a misconfigured deploy fails at the first token operation
+ * instead of quietly minting forgeable sessions. assertJwtSecret() below moves
+ * that failure earlier still, to boot.
+ */
 function jwtSecret() {
-  return process.env.JWT_SECRET || 'dev_insecure_jwt';
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    throw new Error('JWT_SECRET is not set — refusing to sign or verify tokens');
+  }
+  return secret;
+}
+
+/**
+ * Minimum length for the signing secret.
+ *
+ * HS256 keys shorter than the 256-bit hash offer no more security than their
+ * own length, and a short one is nearly always a placeholder someone meant to
+ * replace. 32 characters is the floor, not a target.
+ */
+const MIN_JWT_SECRET_LENGTH = 32;
+
+/**
+ * Called at boot. Fails the deploy rather than the first login.
+ *
+ * Same reasoning as refusing the silent demo-mode fallback: a deployment that
+ * cannot authenticate should not start and look healthy. A crash is visible; a
+ * server issuing forgeable tokens is not.
+ */
+function assertJwtSecret(env = process.env) {
+  const secret = env.JWT_SECRET;
+  if (!secret) {
+    throw new Error(
+      'JWT_SECRET is not set. Refusing to start: without it the server would ' +
+      'either issue forgeable sessions or fail every authenticated request.'
+    );
+  }
+  if (secret.length < MIN_JWT_SECRET_LENGTH) {
+    throw new Error(
+      `JWT_SECRET is ${secret.length} characters; at least ${MIN_JWT_SECRET_LENGTH} are required. ` +
+      'A short secret is almost always a placeholder.'
+    );
+  }
 }
 
 function signAccessToken(userId) {
@@ -264,6 +314,8 @@ async function sweepRefreshTokens() {
 }
 
 module.exports = {
+  assertJwtSecret,
+  MIN_JWT_SECRET_LENGTH,
   ACCESS_TTL,
   REFRESH_TTL_DAYS,
   REFRESH_COOKIE,
