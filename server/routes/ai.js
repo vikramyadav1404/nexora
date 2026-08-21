@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/admin');
+const { requireVerifiedEmail } = require('../middleware/requireVerifiedEmail');
 const { aiLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
 const { INTERESTS } = require('../db/interests');
@@ -21,7 +22,10 @@ const {
  * loop in a client can't run up a bill.
  */
 
-router.use(protect, aiLimiter);
+// Verified email required for every route in this file. These call Claude Opus
+// per request, billed to the operator -- the one place on the gated list where
+// an unverified account costs real money rather than attention.
+router.use(protect, aiLimiter, requireVerifiedEmail);
 
 /** Uniform "not set up" response — these routes are optional. */
 router.use((req, res, next) => {

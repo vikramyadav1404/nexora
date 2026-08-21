@@ -22,7 +22,16 @@ const USER = {
   email: 'tester@nexora.test',
   points: 100,
   total_answers: 0,
-  is_active: true
+  is_active: true,
+  /*
+   * Point transfers now require a verified email -- an unverified address is
+   * how you farm and drain. These fixtures predate the flag and started failing
+   * at the gate when it landed, which is the gate working: they exercise
+   * transfer mechanics, not the verification rule, so the account they use has
+   * to be one that may transfer. test/emailVerification.test.mjs covers the
+   * refusal.
+   */
+  email_verified: true
 };
 const PEER = {
   id: '00000000-0000-4000-8000-0000000000bb',
@@ -30,7 +39,8 @@ const PEER = {
   email: 'peer@nexora.test',
   points: 10,
   total_answers: 0,
-  is_active: true
+  is_active: true,
+  email_verified: true
 };
 
 let db;

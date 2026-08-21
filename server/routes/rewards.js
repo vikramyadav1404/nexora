@@ -3,6 +3,7 @@ const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { shapeAuthor, computeBadges, withMediaColumns } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
+const { requireVerifiedEmail } = require('../middleware/requireVerifiedEmail');
 const { pushNotification } = require('../db/features');
 const { isValidUuid, sanitizeText } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
@@ -70,7 +71,7 @@ router.get('/leaderboard', protect, asyncHandler(async (req, res) => {
 }, "Something went wrong on our end"));
 
 // POST /api/rewards/transfer
-router.post('/transfer', protect, asyncHandler(async (req, res) => {
+router.post('/transfer', protect, requireVerifiedEmail, asyncHandler(async (req, res) => {
   const { toUserId, points, message } = req.body;
   const pts = parseInt(points, 10);
 

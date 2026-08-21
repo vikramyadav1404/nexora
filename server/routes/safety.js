@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
+const { requireVerifiedEmail } = require('../middleware/requireVerifiedEmail');
 const { shapePerson } = require('../db/helpers');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
@@ -60,7 +61,7 @@ router.get('/blocks', protect, asyncHandler(async (req, res) => {
 }, "Could not complete that request"));
 
 // POST /api/reports
-router.post('/reports', protect, writeLimiter, asyncHandler(async (req, res) => {
+router.post('/reports', protect, writeLimiter, requireVerifiedEmail, asyncHandler(async (req, res) => {
   const { targetType, targetId, reason, details } = req.body;
   if (!targetType || !targetId || !reason) {
     return res.status(400).json({ message: 'targetType, targetId, and reason required' });
