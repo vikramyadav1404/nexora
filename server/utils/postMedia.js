@@ -26,7 +26,7 @@ const { MediaError, resolveUploadedObject } = require('./profileMedia');
 const { SNIFF_LENGTH, sniffImageType, sniffVideoType } = require('./magicBytes');
 const {
   readRange,
-  getPublicUrl,
+  mediaPath,
   POST_ALLOWED_MIME
 } = require('./mediaStorage');
 
@@ -108,7 +108,7 @@ async function verifyPostUpload({ key, userId }) {
   return {
     key,
     bucket,
-    url: getPublicUrl(bucket, key),
+    url: mediaPath(bucket, key),
     type: actual.type,
     contentType: actual.contentType,
     size: stat.size

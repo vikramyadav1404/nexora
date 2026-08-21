@@ -81,8 +81,13 @@ async function ensureBuckets() {
       results[name] = 'exists';
       continue;
     }
+    /*
+     * Private. A public bucket hands every object to anyone with the URL,
+     * forever, with no way to express "only people who can see this post" --
+     * routes/media.js exists to ask that question instead.
+     */
     const { error } = await db.storage.createBucket(name, {
-      public: true,
+      public: false,
       fileSizeLimit: 50 * 1024 * 1024
     });
     results[name] = error ? error.message : 'created';

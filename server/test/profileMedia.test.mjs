@@ -84,7 +84,8 @@ beforeEach(() => {
   fetchCalls.length = 0;
   vi.stubGlobal('fetch', async (url, opts = {}) => {
     fetchCalls.push(String(url));
-    const match = String(url).match(/\/read\/([^/]+)\/(.+)$/);
+    // The fake signs URLs the way Supabase does: /object/sign/<bucket>/<key>?token=…
+    const match = String(url).match(/\/object\/sign\/([^/]+)\/(.+?)(?:\?|$)/);
     if (!match) return { ok: false, status: 404 };
     const obj = db._objects.get(`${match[1]}/${decodeURIComponent(match[2])}`);
     if (!obj) return { ok: false, status: 404 };

@@ -25,6 +25,8 @@ const {
   revokeFamily,
   setRefreshCookie,
   clearRefreshCookie,
+  setMediaCookie,
+  clearMediaCookie,
   signMfaPendingToken,
   verifyMfaPendingToken
 } = require('../utils/tokens');
@@ -56,6 +58,9 @@ async function startSession(req, res, userId) {
     ip: req.headers['x-forwarded-for'] || req.ip || ''
   });
   setRefreshCookie(res, session.refreshToken);
+  // The credential an <img> can send. Every other route uses the Authorization
+  // header, which the browser cannot attach to an image request.
+  setMediaCookie(res, userId);
   return session;
 }
 
@@ -268,11 +273,14 @@ router.post('/refresh', async (req, res) => {
   }
 
   try {
-    const { accessToken, refreshToken } = await rotateRefreshToken(presented, {
+    const { accessToken, refreshToken, userId } = await rotateRefreshToken(presented, {
       userAgent: req.headers['user-agent'] || '',
       ip: req.headers['x-forwarded-for'] || req.ip || ''
     });
     setRefreshCookie(res, refreshToken);
+    // Renewed on rotation so it cannot lapse mid-session while the
+    // access token keeps working.
+    setMediaCookie(res, userId);
     res.json({ token: accessToken });
   } catch (err) {
     if (err instanceof RefreshError) {
@@ -280,6 +288,7 @@ router.post('/refresh', async (req, res) => {
       // the family. Clear the cookie so the client stops retrying a token that
       // will never work again.
       clearRefreshCookie(res);
+      clearMediaCookie(res);
       return res.status(401).json({
         message: err.reuse ? 'Session ended for security reasons. Please log in again.' : 'Session expired'
       });
@@ -321,6 +330,7 @@ router.post('/logout', asyncHandler(async (req, res) => {
   }
 
   clearRefreshCookie(res);
+  clearMediaCookie(res);
   res.json({ message: 'Logged out' });
 }, 'Could not log out'));
 
@@ -583,6 +593,19 @@ router.post('/mfa/backup-codes', protect, sensitiveLimiter, asyncHandler(async (
 router.get('/me', protect, asyncHandler(async (req, res) => {
   const db = getSupabase();
   const userId = req.user.id;
+
+  /*
+   * Also set here, and this is the one that matters for the rollout.
+   *
+   * Every session that existed before the media cookie shipped has none, so
+   * their avatars would 401 until they happened to log in again. /me runs on
+   * every app boot, so refreshing the page is enough -- nobody has to notice
+   * anything, and nobody sees a page of broken images.
+   *
+   * Harmless to reissue: it is derived from the already-authenticated user, not
+   * from anything the caller sent.
+   */
+  setMediaCookie(res, userId);
 
   let friends = [];
   const { data: links } = await db.from('friendships').select('friend_id').eq('user_id', userId);

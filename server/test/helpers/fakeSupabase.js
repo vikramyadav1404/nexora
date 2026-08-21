@@ -295,11 +295,20 @@ function createFakeSupabase(seed = {}) {
           error: null
         });
       },
-      createSignedUrl(key) {
+      createSignedUrl(key, expiresIn) {
         const obj = objects.get(objectId(bucket, key));
         if (!obj) return Promise.resolve({ data: null, error: { message: 'Object not found' } });
+        /*
+         * Shaped like the real thing: /storage/v1/object/sign/<bucket>/<key>
+         * with a token. routes/media.js redirects to whatever comes back, and a
+         * test asserting it is a *signed* URL rather than a public one can only
+         * mean something if the fake distinguishes the two.
+         */
         return Promise.resolve({
-          data: { signedUrl: `https://fake.storage/read/${bucket}/${key}` },
+          data: {
+            signedUrl: `https://fake.storage/storage/v1/object/sign/${bucket}/${key}` +
+              `?token=fake-signature&expiresIn=${expiresIn || 60}`
+          },
           error: null
         });
       },

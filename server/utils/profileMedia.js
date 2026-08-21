@@ -13,7 +13,7 @@ const {
   getObject,
   putObject,
   deleteObject,
-  getPublicUrl
+  mediaPath
 } = require('./mediaStorage');
 const { SNIFF_LENGTH, sniffImageType } = require('./magicBytes');
 const {
@@ -133,7 +133,7 @@ async function verifyUpload({ key, kind, userId }) {
  * the full-size image on its own.
  */
 async function buildDerivatives({ bucket, key, kind }) {
-  const url = getPublicUrl(bucket, key);
+  const url = mediaPath(bucket, key);
 
   if (kind === 'cover') {
     // Covers render at one size. The uploaded object is already cropped wide by

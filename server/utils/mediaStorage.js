@@ -178,7 +178,7 @@ async function putObject(bucket, key, buffer, contentType) {
     .storage.from(bucket)
     .upload(key, buffer, { contentType, upsert: true });
   if (error) throw error;
-  return { key, url: getPublicUrl(bucket, key) };
+  return { key, url: mediaPath(bucket, key) };
 }
 
 /**
@@ -201,9 +201,21 @@ async function deleteObject(bucket, key) {
   }
 }
 
-function getPublicUrl(bucket, key) {
-  const base = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-  return `${base}/storage/v1/object/public/${bucket}/${key}`;
+/**
+ * The URL stored in the database and rendered by the client.
+ *
+ * This used to return `${SUPABASE_URL}/storage/v1/object/public/...`, which is
+ * readable by anyone who has ever seen it -- no expiry, no relationship to the
+ * post's visibility, and still live after the account is deleted.
+ *
+ * It now returns a path on this API. routes/media.js authorises the request and
+ * redirects to a short-lived signed URL, so the stored value never expires and
+ * the authorisation happens per request. Relative on purpose: the client
+ * reaches the API same-origin through the rewrites, which is what lets the
+ * media cookie be sent at all.
+ */
+function mediaPath(bucket, key) {
+  return `/api/media/${bucket}/${key}`;
 }
 
 module.exports = {
@@ -222,5 +234,5 @@ module.exports = {
   getObject,
   putObject,
   deleteObject,
-  getPublicUrl
+  mediaPath
 };

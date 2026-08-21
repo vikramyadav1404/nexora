@@ -313,12 +313,91 @@ async function sweepRefreshTokens() {
   return { deleted: (data || []).length };
 }
 
+
+/* ── media cookie ────────────────────────────────────────────
+   The credential an <img> can actually send.                  */
+
+const MEDIA_COOKIE = 'nexora_media';
+const TOKEN_TYPE_MEDIA = 'media';
+
+/**
+ * Media reads need their own credential, and it has to be a cookie.
+ *
+ * Every other route authenticates with an Authorization header. `<img src>` and
+ * `<video src>` cannot send one -- the browser issues those requests itself --
+ * and the refresh cookie is scoped to /api/auth, so it never reaches
+ * /api/media. Without a dedicated cookie there is no way to authorise an image
+ * request at all, which is why the buckets were public in the first place.
+ *
+ * SameSite=Lax is doing real work here rather than being a relaxation. Our own
+ * client reaches the API same-origin through the rewrites in vercel.json, so
+ * the cookie is sent. An attacker embedding <img src="https://…/api/media/…">
+ * on their own page gets nothing, because Lax withholds cookies on cross-site
+ * subresource requests. The default fails in the direction we want.
+ *
+ * Strict would also work for the embed case but breaks legitimate top-level
+ * navigation to a media URL, and Lax already denies the attack that matters.
+ *
+ * Deliberately narrow: it authorises reading media and nothing else. It cannot
+ * be exchanged for a session, and middleware/auth.js will not accept it because
+ * of the typ check.
+ */
+const MEDIA_TTL_DAYS = 30;
+
+function signMediaToken(userId) {
+  return jwt.sign({ id: userId, typ: TOKEN_TYPE_MEDIA }, jwtSecret(), {
+    expiresIn: `${MEDIA_TTL_DAYS}d`
+  });
+}
+
+/**
+ * @returns {string|null} the user id this token authorises media reads for.
+ */
+function verifyMediaToken(token) {
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, jwtSecret());
+    // Only a media token. An access token must not double as one -- they have
+    // different lifetimes and a different blast radius if copied.
+    if (decoded?.typ !== TOKEN_TYPE_MEDIA || !decoded.id) return null;
+    return decoded.id;
+  } catch {
+    return null;
+  }
+}
+
+function mediaCookieOptions({ secure = process.env.NODE_ENV === 'production' } = {}) {
+  return {
+    httpOnly: true,
+    secure,
+    sameSite: 'lax',
+    path: '/api/media',
+    maxAge: MEDIA_TTL_DAYS * 24 * 60 * 60 * 1000
+  };
+}
+
+function setMediaCookie(res, userId) {
+  res.cookie(MEDIA_COOKIE, signMediaToken(userId), mediaCookieOptions());
+}
+
+function clearMediaCookie(res) {
+  res.clearCookie(MEDIA_COOKIE, { ...mediaCookieOptions(), maxAge: undefined });
+}
+
 module.exports = {
   assertJwtSecret,
   MIN_JWT_SECRET_LENGTH,
   ACCESS_TTL,
   REFRESH_TTL_DAYS,
   REFRESH_COOKIE,
+  MEDIA_COOKIE,
+  TOKEN_TYPE_MEDIA,
+  MEDIA_TTL_DAYS,
+  signMediaToken,
+  verifyMediaToken,
+  mediaCookieOptions,
+  setMediaCookie,
+  clearMediaCookie,
   TOKEN_TYPE_ACCESS,
   TOKEN_TYPE_MFA_PENDING,
   MFA_PENDING_TTL,

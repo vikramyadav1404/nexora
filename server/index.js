@@ -148,6 +148,9 @@ function mountRealRoutes(appInstance) {
   appInstance.use('/api/rewards', require('./routes/rewards'));
   appInstance.use('/api/users', require('./routes/users'));
   appInstance.use('/api/uploads', require('./routes/uploads'));
+  // Authorising redirect for stored media. Buckets are private; this is the
+  // only way an <img> gets at them. See routes/media.js.
+  appInstance.use('/api/media', require('./routes/media'));
   appInstance.use('/api/notifications', require('./routes/notifications'));
   appInstance.use('/api/bookmarks', require('./routes/bookmarks'));
   appInstance.use('/api/search', require('./routes/search'));

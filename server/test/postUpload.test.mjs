@@ -78,7 +78,8 @@ beforeEach(() => {
   // readRange signs a URL then fetches it with a Range header. Serve those out
   // of the fake bucket instead of the network.
   vi.stubGlobal('fetch', async (url, opts = {}) => {
-    const match = String(url).match(/\/read\/([^/]+)\/(.+)$/);
+    // The fake signs URLs the way Supabase does: /object/sign/<bucket>/<key>?token=…
+    const match = String(url).match(/\/object\/sign\/([^/]+)\/(.+?)(?:\?|$)/);
     if (!match) return { ok: false, status: 404 };
     const obj = db._objects.get(`${match[1]}/${decodeURIComponent(match[2])}`);
     if (!obj) return { ok: false, status: 404 };
