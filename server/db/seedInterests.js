@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const { fixtureCost } = require('../utils/bcryptCost');
 const { getSupabase } = require('./supabase');
 const { CREATORS, SEED_POSTS } = require('./interests');
 
@@ -10,7 +11,7 @@ async function ensureInterestContent(userId, interests = []) {
   if (!interests.length) return { creatorsFollowed: 0, postsSeeded: 0 };
 
   const db = getSupabase();
-  const passwordHash = await bcrypt.hash('NexoraSeed!2026', 10);
+  const passwordHash = await bcrypt.hash('NexoraSeed!2026', fixtureCost());
   let postsSeeded = 0;
   let creatorsFollowed = 0;
   const creatorIds = [];

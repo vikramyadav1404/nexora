@@ -5,6 +5,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const { fixtureCost } = require('../utils/bcryptCost');
 const {
   store, initDemoStore, shapeDemoUser, findUserByEmail, findUserById,
   listPosts, shapePost, INTERESTS, CHALLENGES,
@@ -91,7 +92,7 @@ router.post('/auth/register', async (req, res) => {
       name,
       email: email.toLowerCase().trim(),
       phone: phone || '',
-      password: await bcrypt.hash(password, 10),
+      password: await bcrypt.hash(password, fixtureCost()),
       gender: gender || 'prefer-not-to-say',
       interests: [],
       onboardingCompleted: false,
@@ -190,7 +191,7 @@ router.post('/auth/change-password', protectDemo, async (req, res) => {
   if (!(await bcrypt.compare(currentPassword, req.userRaw.password))) {
     return res.status(401).json({ message: 'Current password is incorrect' });
   }
-  req.userRaw.password = await bcrypt.hash(newPassword, 10);
+  req.userRaw.password = await bcrypt.hash(newPassword, fixtureCost());
   res.json({ message: 'Password changed successfully' });
 });
 

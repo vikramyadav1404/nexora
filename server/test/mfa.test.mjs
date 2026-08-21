@@ -20,6 +20,8 @@ process.env.JWT_SECRET = 'test_jwt_secret';
 process.env.MFA_SECRET_KEY = 'test_mfa_encryption_key_long_enough';
 
 const require = createRequire(import.meta.url);
+// Fixture hashes track the same cost knob as the source; see utils/bcryptCost.js.
+const { fixtureCost } = require('../utils/bcryptCost.js');
 const { __setTestClient } = require('../db/supabase.js');
 const tokens = require('../utils/tokens.js');
 const totp = require('../utils/totp.js');
@@ -48,7 +50,7 @@ async function seed({ mfaEnabled = false, ...overrides } = {}) {
       id: USER_ID,
       name: 'MFA Tester',
       email: 'mfa@nexora.test',
-      password: await bcrypt.hash(PASSWORD, 10),
+      password: await bcrypt.hash(PASSWORD, fixtureCost()),
       is_active: true,
       points: 0,
       mfa_enabled: mfaEnabled,
@@ -603,7 +605,7 @@ describe('a backup code is single-use', () => {
     db._tables.mfa_backup_codes.push({
       id: 'bc1',
       user_id: USER_ID,
-      code_hash: await bcrypt.hash(plain.replace(/-/g, '').toUpperCase(), 10),
+      code_hash: await bcrypt.hash(plain.replace(/-/g, '').toUpperCase(), fixtureCost()),
       used_at: null
     });
 
@@ -617,7 +619,7 @@ describe('a backup code is single-use', () => {
     db._tables.mfa_backup_codes.push({
       id: 'bc2',
       user_id: USER_ID,
-      code_hash: await bcrypt.hash(plain.replace(/-/g, '').toUpperCase(), 10),
+      code_hash: await bcrypt.hash(plain.replace(/-/g, '').toUpperCase(), fixtureCost()),
       used_at: null
     });
 

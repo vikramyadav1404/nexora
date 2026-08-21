@@ -5,6 +5,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const { createClient } = require('@supabase/supabase-js');
 const bcrypt = require('bcryptjs');
+const { fixtureCost } = require('../utils/bcryptCost');
 
 const REQUIRED_TABLES = [
   'users',
@@ -73,7 +74,7 @@ async function main() {
 
   // Smoke: insert + delete test user
   const testEmail = `nexora.verify.${Date.now()}@nexora.test`;
-  const hash = await bcrypt.hash('VerifyTest123', 10);
+  const hash = await bcrypt.hash('VerifyTest123', fixtureCost());
   const { data: created, error: cErr } = await db
     .from('users')
     .insert({

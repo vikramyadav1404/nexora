@@ -1,4 +1,5 @@
 const bcrypt = require('bcryptjs');
+const { passwordCost } = require('../utils/bcryptCost');
 
 /**
  * Migration 008 adds avatar_thumb_url and cover_url.
@@ -94,7 +95,7 @@ function getDailyPostLimit(friendCount) {
 }
 
 async function hashPassword(password) {
-  return bcrypt.hash(password, 12);
+  return bcrypt.hash(password, passwordCost());
 }
 
 async function comparePassword(plain, hash) {

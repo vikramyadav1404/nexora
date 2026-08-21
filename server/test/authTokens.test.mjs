@@ -14,6 +14,8 @@ import { createFakeSupabase } from './helpers/fakeSupabase.js';
 process.env.JWT_SECRET = 'test_jwt_secret';
 
 const require = createRequire(import.meta.url);
+// Fixture hashes track the same cost knob as the source; see utils/bcryptCost.js.
+const { fixtureCost } = require('../utils/bcryptCost.js');
 const { __setTestClient } = require('../db/supabase.js');
 const tokens = require('../utils/tokens.js');
 const jwt = require('jsonwebtoken');
@@ -51,7 +53,7 @@ function cookieAttrs(res) {
 
 beforeEach(async () => {
   db = createFakeSupabase({
-    users: [{ ...USER, password: await bcrypt.hash('correct-horse', 10) }],
+    users: [{ ...USER, password: await bcrypt.hash('correct-horse', fixtureCost()) }],
     refresh_tokens: []
   });
   __setTestClient(db);

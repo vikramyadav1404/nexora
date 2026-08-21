@@ -16,6 +16,8 @@ import { createFakeSupabase } from './helpers/fakeSupabase.js';
 process.env.JWT_SECRET = 'test_jwt_secret';
 
 const require = createRequire(import.meta.url);
+// Fixture hashes track the same cost knob as the source; see utils/bcryptCost.js.
+const { fixtureCost } = require('../utils/bcryptCost.js');
 const { __setTestClient } = require('../db/supabase.js');
 const { isDev } = require('../utils/respond.js');
 const bcrypt = require('bcryptjs');
@@ -47,7 +49,7 @@ const forgot = (email) =>
 
 beforeEach(async () => {
   db = createFakeSupabase({
-    users: [{ ...USER, password: await bcrypt.hash('old-password', 10) }],
+    users: [{ ...USER, password: await bcrypt.hash('old-password', fixtureCost()) }],
     refresh_tokens: []
   });
   __setTestClient(db);

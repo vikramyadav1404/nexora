@@ -6,6 +6,7 @@
  */
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
+const { backupCodeCost } = require('./bcryptCost');
 const { getSupabase } = require('../db/supabase');
 const { generateSecret, verifyCode, otpauthUri } = require('./totp');
 
@@ -116,7 +117,9 @@ const CODE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTVWXYZ';
  * a hash up by value — every unused code must be compared in turn. Cost 10
  * keeps both under a second for no meaningful loss.
  */
-const BACKUP_CODE_COST = 10;
+// The cost itself now lives in utils/bcryptCost.js. It is read at each call
+// rather than captured here, so a test that lowers it does not depend on module
+// load order -- and there is no second name to drift from the real one.
 
 function generateBackupCode() {
   const bytes = crypto.randomBytes(BACKUP_CODE_LENGTH);
@@ -147,7 +150,7 @@ async function regenerateBackupCodes(userId) {
   const rows = await Promise.all(
     codes.map(async (code) => ({
       user_id: userId,
-      code_hash: await bcrypt.hash(normalizeBackupCode(code), BACKUP_CODE_COST)
+      code_hash: await bcrypt.hash(normalizeBackupCode(code), backupCodeCost())
     }))
   );
 
@@ -341,7 +344,6 @@ async function disableMfa(userId) {
 module.exports = {
   BACKUP_CODE_COUNT,
   BACKUP_CODE_LENGTH,
-  BACKUP_CODE_COST,
   MFA_MAX_ATTEMPTS,
   MFA_LOCKOUT_MINUTES,
   lockoutRemainingMs,

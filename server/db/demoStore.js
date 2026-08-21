@@ -3,6 +3,7 @@
  * or when Supabase is not configured.
  */
 const bcrypt = require('bcryptjs');
+const { fixtureCost } = require('../utils/bcryptCost');
 const { randomUUID } = require('crypto');
 const { INTERESTS, SEED_POSTS, CREATORS } = require('./interests');
 /*
@@ -243,7 +244,7 @@ function seedEngagement(demoId, now) {
 async function initDemoStore() {
   if (store.ready) return store;
 
-  const passwordHash = await bcrypt.hash('demo1234', 10);
+  const passwordHash = await bcrypt.hash('demo1234', fixtureCost());
   const now = new Date().toISOString();
 
   // Main demo user
