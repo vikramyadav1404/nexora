@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import axios from '../services/api';
+import useResource from '../hooks/useResource';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { Check, Zap, Shield, AlertTriangle, Receipt, RefreshCw, Gift } from 'lucide-react';
+import { ErrorState } from '../components/ui';
 
 function loadRazorpayScript() {
   return new Promise((resolve, reject) => {
@@ -53,7 +55,6 @@ const PLANS = [
 export default function Subscriptions() {
   const { user, refreshUser } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [transactions, setTransactions] = useState([]);
   const [tab, setTab] = useState('plans');
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -61,21 +62,23 @@ export default function Subscriptions() {
   // Null until /plans answers, so the buttons are not briefly enabled on load.
   const [paymentsAvailable, setPaymentsAvailable] = useState(null);
 
+  // A swallowed failure left transactions empty, so "No transactions yet"
+  // was shown to people who had in fact paid -- the worst version of this bug,
+  // since it says the money was never taken.
+  const historyRes = useResource(
+    (signal) => axios.get('/api/subscriptions/history', { signal }).then(r => r.data.transactions || []),
+    []
+  );
+  const transactions = historyRes.data || [];
+  const fetchHistory = historyRes.reload;
+
   useEffect(() => {
-    fetchHistory();
     axios.get('/api/subscriptions/plans')
       .then(res => setPaymentsAvailable(res.data?.paymentsAvailable !== false))
       // An older API has no such field. Assume available rather than hiding
       // working buttons on a deployment that never had this problem.
       .catch(() => setPaymentsAvailable(true));
   }, []);
-
-  const fetchHistory = async () => {
-    try {
-      const res = await axios.get('/api/subscriptions/history');
-      setTransactions(res.data.transactions);
-    } catch {}
-  };
 
   const handleSubscribe = async (planId) => {
     if (planId === 'free') { toast('You are already on the Free plan'); return; }
@@ -354,7 +357,9 @@ export default function Subscriptions() {
 
         {tab === 'history' && (
           <div style={{ maxWidth: 600, margin: '0 auto' }}>
-            {transactions.length === 0 ? (
+            {historyRes.isError ? (
+              <ErrorState title="Could not load billing history" onRetry={historyRes.reload} />
+            ) : transactions.length === 0 ? (
               <div className="empty-state">
                 <Receipt size={48} style={{ margin: '0 auto 16px' }} />
                 <h3>No transactions yet</h3>

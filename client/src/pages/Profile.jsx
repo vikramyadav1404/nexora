@@ -54,6 +54,8 @@ export default function Profile() {
     }
   });
 
+  const [notFound, setNotFound] = useState(false);
+
   useEffect(() => {
     fetchProfile();
   }, [id]);
@@ -70,9 +72,20 @@ export default function Profile() {
       });
       const cid = currentUser?._id || currentUser?.id;
       setIsFriend(res.data.user.friends?.some(f => (f._id || f) === cid));
-    } catch {
-      toast.error('Profile not found');
-      navigate('/feed');
+    } catch (err) {
+      /*
+       * Not an ejection. This used to toast "Profile not found" and
+       * navigate('/feed') on ANY failure -- a timeout, a 500, a dropped
+       * connection -- which threw the user off the page they asked for and
+       * blamed the profile for a network problem. It also made the ErrorState
+       * below unreachable: setLoading(false) and the route change batch into
+       * one commit, so it never painted.
+       *
+       * A genuine 404 still means the profile is gone, and the ErrorState says
+       * so. Anything else is ours, and it offers a retry.
+       */
+      setProfile(null);
+      setNotFound(err?.response?.status === 404);
     } finally {
       setLoading(false);
     }
@@ -163,9 +176,13 @@ export default function Profile() {
     <div className="page-container">
       <div style={{ maxWidth: 900, margin: '0 auto', padding: '32px 24px' }}>
         <ErrorState
-          title="Profile unavailable"
-          description="We could not load this profile. It may have been removed."
-          onRetry={() => { setLoading(true); fetchProfile(); }}
+          title={notFound ? 'Profile not found' : 'Could not load this profile'}
+          description={notFound
+            ? 'This account may have been removed.'
+            : 'Check your connection and try again.'}
+          // No retry on a 404 -- retrying something that genuinely is not there
+          // just fails again and reads as the app being broken.
+          onRetry={notFound ? undefined : () => { setLoading(true); fetchProfile(); }}
         />
       </div>
     </div>

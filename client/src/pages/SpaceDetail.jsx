@@ -1,25 +1,28 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import axios from '../services/api';
 import { ArrowLeft } from 'lucide-react';
-import { Avatar, SkeletonList, SkeletonPostCard } from '../components/ui';
+import { Avatar, SkeletonList, SkeletonPostCard, ErrorState } from '../components/ui';
+import useResource from '../hooks/useResource';
 
 export default function SpaceDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [data, setData] = useState(null);
   const [tab, setTab] = useState('posts');
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    setLoading(true);
-    axios.get(`/api/spaces/${id}`)
-      .then(res => setData(res.data))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, [id]);
+  /*
+   * The failure and the not-found cases were the same case here: `.catch(() =>
+   * setData(null))` fell through to the "Space not found" screen below, so a
+   * dropped connection told the user this space does not exist. They are
+   * separate branches now.
+   */
+  const spaceRes = useResource(
+    (signal) => axios.get(`/api/spaces/${id}`, { signal }).then(r => r.data),
+    [id]
+  );
+  const { status, data } = spaceRes;
 
-  if (loading) {
+  if (status === 'loading') {
     return (
       <div className="page-container" style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
         <SkeletonList count={2} Item={SkeletonPostCard} />
@@ -27,6 +30,19 @@ export default function SpaceDetail() {
     );
   }
 
+  if (status === 'error') {
+    return (
+      <div className="page-container">
+        <ErrorState
+          title="Could not load this Space"
+          description="Check your connection and try again."
+          onRetry={spaceRes.reload}
+        />
+      </div>
+    );
+  }
+
+  // Reached only after a successful response, so this now means what it says.
   if (!data?.space) {
     return (
       <div className="page-container">

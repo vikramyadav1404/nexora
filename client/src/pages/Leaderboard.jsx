@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from '../services/api';
-import toast from 'react-hot-toast';
+import useResource from '../hooks/useResource';
+import { ErrorState } from '../components/ui';
 import { useAuth } from '../contexts/AuthContext';
 import { Trophy, Star, ArrowRight, Gift } from 'lucide-react';
 import { Avatar } from '../components/ui';
@@ -9,30 +10,25 @@ import { Avatar } from '../components/ui';
 export default function Leaderboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [leaderboard, setLeaderboard] = useState([]);
-  const [transfers, setTransfers] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('top');
 
-  useEffect(() => {
-    fetchLeaderboard();
-    fetchTransfers();
-  }, []);
+  /*
+   * Two independent requests, two independent states. The transfers fetch used
+   * to swallow its error entirely, so a failure rendered "No transfers yet" --
+   * and the leaderboard toasted but still left an empty list behind the toast,
+   * reading as "no users yet, start answering questions to earn points".
+   */
+  const boardRes = useResource(
+    (signal) => axios.get('/api/rewards/leaderboard', { signal }).then(r => r.data.leaderboard || []),
+    []
+  );
+  const transfersRes = useResource(
+    (signal) => axios.get('/api/rewards/transfers', { signal }).then(r => r.data.transfers || []),
+    []
+  );
 
-  const fetchLeaderboard = async () => {
-    try {
-      const res = await axios.get('/api/rewards/leaderboard');
-      setLeaderboard(res.data.leaderboard);
-    } catch { toast.error('Failed to load leaderboard'); }
-    finally { setLoading(false); }
-  };
-
-  const fetchTransfers = async () => {
-    try {
-      const res = await axios.get('/api/rewards/transfers');
-      setTransfers(res.data.transfers);
-    } catch {}
-  };
+  const leaderboard = boardRes.data || [];
+  const transfers = transfersRes.data || [];
 
   const BADGE_EMOJI = { bronze: '🥉', silver: '🥈', gold: '🥇', contributor: '✍️', expert: '🎓' };
   const RANK_COLORS = { 0: '#ffd700', 1: '#c0c0c0', 2: '#cd7f32' };
@@ -117,7 +113,7 @@ export default function Leaderboard() {
 
             {/* Full leaderboard */}
             <div className="glass-card" style={{ padding: 8 }}>
-              {loading ? (
+              {boardRes.isLoading ? (
                 [1,2,3,4,5].map(i => (
                   <div key={i} className="leaderboard-item">
                     <div className="skeleton" style={{ width: 28, height: 28, borderRadius: '50%' }} />
@@ -128,6 +124,13 @@ export default function Leaderboard() {
                     </div>
                   </div>
                 ))
+              ) : boardRes.isError ? (
+                /* Checked before emptiness: a failed request has no rows, so
+                   testing length first reports every failure as "no users". */
+                <ErrorState
+                  title="Could not load the leaderboard"
+                  onRetry={boardRes.reload}
+                />
               ) : leaderboard.length === 0 ? (
                 <div className="empty-state" style={{ padding: '40px 0' }}>
                   <Trophy size={40} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
@@ -189,7 +192,12 @@ export default function Leaderboard() {
         {tab === 'history' && (
           <div className="glass-card" style={{ padding: 24 }}>
             <h3 style={{ marginBottom: 16 }}>Recent Point Transfers</h3>
-            {transfers.length === 0 ? (
+            {transfersRes.isError ? (
+              <ErrorState
+                title="Could not load transfers"
+                onRetry={transfersRes.reload}
+              />
+            ) : transfers.length === 0 ? (
               <div className="empty-state" style={{ padding: '40px 0' }}>
                 <Gift size={40} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
                 <h3>No transfers yet</h3>

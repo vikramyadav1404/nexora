@@ -1,42 +1,42 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from '../services/api';
 import { Search as SearchIcon, Users, FileText, HelpCircle, Layers } from 'lucide-react';
-import { Avatar } from '../components/ui';
+import { Avatar, ErrorState } from '../components/ui';
+import useResource from '../hooks/useResource';
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
-  const [q, setQ] = useState(params.get('q') || '');
-  const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState({ people: [], posts: [], questions: [], spaces: [] });
+  const EMPTY = { people: [], posts: [], questions: [], spaces: [] };
+  const urlQuery = (params.get('q') || '').trim();
+  const [q, setQ] = useState(urlQuery);
 
-  const runSearch = async (query) => {
-    if (!query || query.length < 2) {
-      setResults({ people: [], posts: [], questions: [], spaces: [] });
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await axios.get('/api/search', { params: { q: query } });
-      setResults(res.data);
-    } catch {
-      setResults({ people: [], posts: [], questions: [], spaces: [] });
-    } finally {
-      setLoading(false);
-    }
-  };
+  /*
+   * Keyed on the URL query, which fixes two things at once.
+   *
+   * The effect this replaces ran on mount only, and App.jsx keys <Routes> on
+   * location.pathname alone -- so searching from the navbar while already on
+   * /search changed the URL and nothing else: same input, same results, no
+   * indication anything had happened. A dependency makes that a re-run.
+   *
+   * And the old catch reset results to empty, which rendered "No results" in
+   * every section on a 500 -- telling the user their query matched nothing when
+   * the search never ran.
+   */
+  const res = useResource(
+    (signal) => axios.get('/api/search', { params: { q: urlQuery }, signal }).then(r => r.data),
+    [urlQuery],
+    { enabled: urlQuery.length >= 2, initialData: EMPTY }
+  );
 
-  useEffect(() => {
-    const initial = params.get('q') || '';
-    setQ(initial);
-    if (initial) runSearch(initial);
-  }, []);
+  const results = res.data || EMPTY;
+  const loading = res.isLoading;
 
   const submit = (e) => {
     e.preventDefault();
-    setParams(q ? { q } : {});
-    runSearch(q.trim());
+    // Writing the param is now the whole action -- the resource follows it.
+    setParams(q.trim() ? { q: q.trim() } : {});
   };
 
   return (
@@ -58,7 +58,18 @@ export default function SearchPage() {
 
         {loading && <div className="spinner spinner-lg" style={{ margin: '40px auto' }} />}
 
-        {!loading && q.length >= 2 && (
+        {/* Before the empty sections, not after: a failed search has no
+            results, so rendering the sections first says "No results" for a
+            query that was never actually run. */}
+        {res.isError && (
+          <ErrorState
+            title="Search is unavailable right now"
+            description="This is us, not your query. Try again in a moment."
+            onRetry={res.reload}
+          />
+        )}
+
+        {!loading && !res.isError && urlQuery.length >= 2 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             <Section title="Spaces" icon={<Layers size={18} />} empty={!results.spaces?.length}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>

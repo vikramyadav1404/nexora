@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import axios from '../services/api';
+import useResource from '../hooks/useResource';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Globe, Shield, Key, Smartphone, Mail, Check, AlertTriangle, RefreshCw, Eye, EyeOff, UserCheck, Users, Sparkles, Volume2, VolumeX } from 'lucide-react';
 import { LANGUAGE_META } from '../i18n/translations';
-import { Avatar } from '../components/ui';
+import { Avatar, ErrorState } from '../components/ui';
 import TwoFactorPanel from '../components/TwoFactorPanel';
 import { soundEnabled, setSoundEnabled, playLike } from '../utils/sound';
 
@@ -34,24 +35,20 @@ export default function Settings() {
   const [changingPw, setChangingPw] = useState(false);
 
   // Friend requests state
-  const [friendRequests, setFriendRequests] = useState([]);
-  const [loadingReqs, setLoadingReqs] = useState(true);
 
   // User search state
   const [searchQ, setSearchQ] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
 
-  useEffect(() => {
-    fetchFriendRequests();
-  }, []);
-
-  const fetchFriendRequests = async () => {
-    try {
-      const res = await axios.get('/api/users/me/requests');
-      setFriendRequests(res.data.requests);
-    } catch {} finally { setLoadingReqs(false); }
-  };
+  // Swallowed: a failure rendered "No pending requests" AND showed (0) in the
+  // tab bar, so someone with waiting requests was told there were none.
+  const requestsRes = useResource(
+    (signal) => axios.get('/api/users/me/requests', { signal }).then(r => r.data.requests || []),
+    []
+  );
+  const friendRequests = requestsRes.data || [];
+  const loadingReqs = requestsRes.isLoading;
 
   const handleRequestLanguage = async () => {
     if (selectedLang === user?.language) { toast('Already using this language'); return; }
@@ -97,7 +94,7 @@ export default function Settings() {
   const handleAccept = async (fromId) => {
     try {
       await axios.post(`/api/users/accept-friend/${fromId}`);
-      setFriendRequests(prev => prev.filter(r => (r._id || r) !== fromId));
+      requestsRes.setData(prev => prev.filter(r => (r._id || r) !== fromId));
       toast.success('Friend request accepted! 🎉');
       refreshUser();
     } catch { toast.error('Failed'); }
@@ -106,7 +103,7 @@ export default function Settings() {
   const handleDecline = async (fromId) => {
     try {
       await axios.post(`/api/users/decline-friend/${fromId}`);
-      setFriendRequests(prev => prev.filter(r => (r._id || r) !== fromId));
+      requestsRes.setData(prev => prev.filter(r => (r._id || r) !== fromId));
       toast.success('Request declined');
     } catch { toast.error('Failed'); }
   };
@@ -372,6 +369,8 @@ export default function Settings() {
             </h2>
             {loadingReqs ? (
               <div className="spinner" style={{ margin: '20px auto' }} />
+            ) : requestsRes.isError ? (
+              <ErrorState title="Could not load friend requests" onRetry={requestsRes.reload} />
             ) : friendRequests.length === 0 ? (
               <div className="empty-state" style={{ padding: '40px 0' }}>
                 <UserCheck size={40} style={{ margin: '0 auto 12px', opacity: 0.3 }} />

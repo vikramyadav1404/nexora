@@ -25,15 +25,33 @@ export default function Notifications() {
   useEffect(() => { load(); }, []);
 
   const markAll = async () => {
-    await axios.post('/api/notifications/read-all');
-    setItems(prev => prev.map(n => ({ ...n, read: true })));
-    toast.success('All marked as read');
+    // Unhandled before: a failed POST left everything unread with no toast, so
+    // the button read as dead. The local update now follows the server rather
+    // than running regardless of it.
+    try {
+      await axios.post('/api/notifications/read-all');
+      setItems(prev => prev.map(n => ({ ...n, read: true })));
+      toast.success('All marked as read');
+    } catch {
+      toast.error('Could not mark them read');
+    }
   };
 
   const openItem = async (n) => {
     if (!n.read) {
-      try { await axios.post(`/api/notifications/${n.id || n._id}/read`); } catch {}
-      setItems(prev => prev.map(x => (x.id === n.id || x._id === n._id) ? { ...x, read: true } : x));
+      /*
+       * The mark and the local update are one decision, not two.
+       *
+       * `catch {}` followed by an unconditional setItems meant a failed request
+       * still painted the item as read: it looked handled, stayed unread on the
+       * server, and came back on the next load. Marking read is not worth
+       * interrupting navigation for, so a failure is left silent -- but the row
+       * keeps showing unread, which is the truth.
+       */
+      try {
+        await axios.post(`/api/notifications/${n.id || n._id}/read`);
+        setItems(prev => prev.map(x => (x.id === n.id || x._id === n._id) ? { ...x, read: true } : x));
+      } catch { /* stays unread, which is what the server still believes */ }
     }
     if (n.link) navigate(n.link);
   };

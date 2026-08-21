@@ -1,27 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import axios from '../services/api';
+import useResource from '../hooks/useResource';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
 import { Flame, Trophy, Target } from 'lucide-react';
-import { SkeletonList, SkeletonQuestionCard } from '../components/ui';
+import { SkeletonList, SkeletonQuestionCard, ErrorState } from '../components/ui';
 
 export default function Challenges() {
   const { refreshUser } = useAuth();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  const load = async () => {
-    try {
-      const res = await axios.get('/api/challenges');
-      setData(res.data);
-    } catch {
-      toast.error('Failed to load challenges');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
+  /*
+   * The toast was the only signal. `data` stayed null, so the page still
+   * rendered a 0-day streak and an empty challenge list as though those were
+   * the facts -- a toast that has already faded leaves a page confidently
+   * showing wrong numbers.
+   */
+  const res = useResource(
+    (signal) => axios.get('/api/challenges', { signal }).then(r => r.data),
+    []
+  );
+  const { data } = res;
+  const load = res.reload;
 
   const checkIn = async () => {
     try {
@@ -34,10 +32,23 @@ export default function Challenges() {
     }
   };
 
-  if (loading) {
+  if (res.isLoading) {
     return (
       <div className="page-container" style={{ display: 'flex', justifyContent: 'center', padding: 80 }}>
         <SkeletonList count={3} Item={SkeletonQuestionCard} />
+      </div>
+    );
+  }
+
+  /*
+   * Before this branch existed the page fell through with data === null and
+   * rendered a 0-day streak and an empty challenge list -- stating as fact
+   * something it had failed to find out.
+   */
+  if (res.isError) {
+    return (
+      <div className="page-container">
+        <ErrorState title="Could not load challenges" onRetry={res.reload} />
       </div>
     );
   }
