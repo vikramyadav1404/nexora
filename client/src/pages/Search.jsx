@@ -103,7 +103,10 @@ export default function SearchPage() {
                   <div>
                     <div style={{ fontWeight: 600 }}>{p.name}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>
-                      {(p.interests || []).slice(0, 3).join(' · ') || p.email}
+                      {/* Was `|| p.email` — a search for a common name printed
+                          ten strangers' addresses on screen. Bio is the right
+                          fallback: it is something people chose to publish. */}
+                      {(p.interests || []).slice(0, 3).join(' · ') || p.bio || ''}
                     </div>
                   </div>
                 </Link>

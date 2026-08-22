@@ -222,15 +222,31 @@ const findPeople = (q) =>
   request(app()).get('/api/users/search').query({ q }).set('Authorization', `Bearer ${token()}`);
 
 describe('people search', () => {
-  it('returns the shape Settings.jsx reads', async () => {
+  it('returns the shape Settings.jsx reads, and no contact details', async () => {
+    /*
+     * This asserted an exact key list containing `email`, which meant a people
+     * search handed back the address of every match. Settings.jsx rendered it
+     * as the subtitle under each name; it uses bio now.
+     *
+     * Asserting presence rather than an exact set: an equality check on keys is
+     * what made the leak load-bearing, because removing the field broke the
+     * test and looked like the regression. The properties worth pinning are
+     * that the fields the UI needs are there and that contact details are not.
+     */
     ranked.people = [{ id: ALICE.id, rank: 0.8 }];
     const res = await findPeople('alice');
 
     expect(res.status).toBe(200);
     expect(Object.keys(res.body)).toEqual(['users']);
-    expect(Object.keys(res.body.users[0]).sort()).toEqual(
-      ['_id', 'avatar', 'avatarThumbUrl', 'avatarUrl', 'badges', 'email', 'id', 'name', 'points']
-    );
+
+    const person = res.body.users[0];
+    for (const field of ['_id', 'id', 'name', 'avatar', 'avatarUrl', 'avatarThumbUrl', 'badges', 'points']) {
+      expect(person, `people search must still return ${field}`).toHaveProperty(field);
+    }
+
+    expect(person).not.toHaveProperty('email');
+    expect(person).not.toHaveProperty('phone');
+    expect(JSON.stringify(res.body)).not.toContain('@');
   });
 
   it('uses the ranked function, not ILIKE', async () => {

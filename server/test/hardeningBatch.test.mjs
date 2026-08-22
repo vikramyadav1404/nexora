@@ -58,18 +58,36 @@ describe('a stranger never receives contact details', () => {
    * shapeUser carries email, phone and role. That is right for the caller's own
    * record and for an admin listing, and wrong for a list of other people --
    * which is what /api/search, /api/spaces/:id and /api/blocks all return.
-   * /api/users/search already used the narrow shape; its three siblings did not.
+   *
+   * ------------------------------------------------------------------
+   * What this test used to assert, and why that mattered
+   * ------------------------------------------------------------------
+   * It pinned shapePerson's keys to a list that *included* email, with a note
+   * saying the narrow shape "does still carry email -- Settings.jsx renders it
+   * on friend requests", and that phone and role were the real danger.
+   *
+   * So inside a block named "a stranger never receives contact details", the
+   * suite required that strangers receive one. The address of every person in
+   * a search result, a Space member list, a friend request and a block list was
+   * held in place by an equality assertion: removing it would have failed CI
+   * and read as the regression.
+   *
+   * That is the cost of trading a privacy boundary for a UI label. Settings.jsx
+   * wanted a subtitle under each name; it now uses bio, which people choose to
+   * publish. shapePerson delegates to the publicUser allowlist and the trade is
+   * reversed.
    */
-  it('REGRESSION: shapePerson exposes no email-adjacent field beyond the nine it documents', () => {
+  it('REGRESSION: shapePerson returns no email -- it used to, by assertion', () => {
     const shaped = shapePerson(person(OTHER, 'other'));
 
-    expect(Object.keys(shaped).sort()).toEqual(
-      ['_id', 'avatar', 'avatarThumbUrl', 'avatarUrl', 'badges', 'email', 'id', 'name', 'points'].sort()
-    );
-    // The narrow shape does still carry email -- Settings.jsx renders it on
-    // friend requests. What it must never carry is phone or role.
+    expect(shaped).not.toHaveProperty('email');
     expect(shaped).not.toHaveProperty('phone');
     expect(shaped).not.toHaveProperty('role');
+    expect(JSON.stringify(shaped)).not.toContain('@');
+
+    // Still useful, or the fix is just deletion.
+    expect(shaped.name).toBeTruthy();
+    expect(shaped.id).toBe(OTHER);
   });
 
   it('REGRESSION: shapeUser is the wide shape, which is why the split matters', () => {

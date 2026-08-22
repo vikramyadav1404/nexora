@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const {
-  shapeUser, shapePerson, updateSelf, shapeAuthor, withMediaColumns, mediaColumnsAvailable
+  shapeUser, updateSelf, shapeAuthor, withMediaColumns, mediaColumnsAvailable
 } = require('../db/helpers');
+const { publicUser, serializeUser } = require('../db/serialize');
 const { protect } = require('../middleware/auth');
 const { sendEmail, generateOTP } = require('../utils/email');
 const { INTERESTS, GENDERS, normalizeInterests } = require('../db/interests');
@@ -18,20 +19,28 @@ async function getFriendIds(db, userId) {
   return (data || []).map(r => r.friend_id);
 }
 
+/*
+ * `email` is deliberately absent from both selects below.
+ *
+ * The serialiser would drop it anyway, but not selecting it is the stronger
+ * guarantee: a column that never leaves the database cannot be leaked by a
+ * later change to a shape function. These feed friend lists, friend requests
+ * and people search -- other people, every time.
+ */
 async function getUsersByIds(db, ids) {
   if (!ids.length) return [];
-  const { data } = await db.from('users').select(withMediaColumns('id, name, avatar, email, points, badges')).in('id', ids);
-  return (data || []).map(shapePerson);
+  const { data } = await db.from('users').select(withMediaColumns('id, name, avatar, bio, points, badges')).in('id', ids);
+  return (data || []).map(publicUser);
 }
 
 const PEOPLE_SEARCH_LIMIT = 10;
-const PEOPLE_FIELDS = 'id, name, avatar, email, points, badges';
+const PEOPLE_FIELDS = 'id, name, avatar, bio, points, badges';
 
 // Warn once, not per request, if migration 007 has not been run.
 let peopleRpcWarned = false;
 
 /** The response shape Settings.jsx reads. Unchanged by the move to ranking. */
-const shapeResult = shapePerson;
+const shapeResult = publicUser;
 
 /**
  * GET /api/users/search?q=
@@ -264,9 +273,25 @@ router.get('/:id', protect, asyncHandler(async (req, res) => {
   if (error) throw error;
   if (!row) return res.status(404).json({ message: 'User not found' });
 
+  /*
+   * serializeUser decides the shape from who is asking: the owner gets contact
+   * details and the full friend list, everyone else gets the public shape plus
+   * friendCount and isFriend.
+   *
+   * This route used to be shapeUser unconditionally, which handed every
+   * logged-in caller any other account's email address, phone number, role and
+   * quota counters. There is no flag to pass here on purpose -- the comparison
+   * is on row.id inside the serialiser, so a caller cannot reach the owner
+   * shape for a row that is not theirs, and a route cannot forget to ask.
+   */
   const friendIds = await getFriendIds(db, row.id);
-  const friends = await getUsersByIds(db, friendIds);
-  const user = shapeUser(row, { friends });
+  const isOwner = row.id === req.user.id;
+
+  // The full list is only loaded when it will be returned. A non-owner needs
+  // the ids to count and to test membership, not the user records.
+  const friends = isOwner ? await getUsersByIds(db, friendIds) : [];
+
+  const user = serializeUser(row, req.user.id, { friends, friendIds });
   res.json({ user });
 }, "Could not complete that request"));
 

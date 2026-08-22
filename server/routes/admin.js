@@ -103,6 +103,19 @@ router.get('/users/search', requireAdmin, asyncHandler(async (req, res) => {
     .or(`name.ilike.%${safeQ}%,email.ilike.%${safeQ}%`)
     .limit(20);
   if (error) throw error;
+
+  /*
+   * shapeUser here is deliberate, and is the one place contact details are
+   * still returned for someone other than the account holder.
+   *
+   * Moderation needs to identify an account by its email -- it is how a report
+   * about "john" gets matched to the right john. The route is behind
+   * requireAdmin, and the query above searches on email, so withholding it from
+   * the response would leave admins searching for something they cannot see.
+   *
+   * If you are tightening serialisers, do not "fix" this one by reflex. It is a
+   * decision, not an oversight.
+   */
   res.json({ users: (data || []).map(u => shapeUser(u)) });
 }, "Admin action failed"));
 

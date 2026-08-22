@@ -5,8 +5,9 @@ const { protect } = require('../middleware/auth');
 const { INTERESTS } = require('../db/interests');
 const { sendError, asyncHandler } = require('../utils/respond');
 const {
-  shapePerson, shapeQuestion, shapeAuthor, loadPostBundles, loadAuthorMap
+  shapeQuestion, shapeAuthor, loadPostBundles, loadAuthorMap
 } = require('../db/helpers');
+const { publicUser } = require('../db/serialize');
 
 // GET /api/spaces
 router.get('/', protect, asyncHandler(async (req, res) => {
@@ -75,10 +76,15 @@ router.get('/:id', protect, asyncHandler(async (req, res) => {
     .eq('is_active', true)
     .limit(20);
 
-  // shapePerson: a Space member list is other people. shapeUser would return
-  // every member's email and phone to anyone who opened the Space, and there
-  // are only ~16 interest ids to walk.
-  const members = (memberRows || []).map(shapePerson);
+  /*
+   * A Space member list is other people, up to 20 of them per Space, and there
+   * are only ~16 interest ids to walk -- so this endpoint alone could enumerate
+   * a large share of the user base.
+   *
+   * publicUser, not shapePerson. shapePerson was introduced here to stop
+   * shapeUser returning every member's email and phone; it stopped the phone.
+   */
+  const members = (memberRows || []).map(publicUser);
 
   res.json({ space, posts, questions, members });
 }, "Could not load Spaces"));

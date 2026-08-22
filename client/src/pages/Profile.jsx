@@ -70,8 +70,21 @@ export default function Profile() {
         bio: res.data.user.bio || '',
         phone: res.data.user.phone || ''
       });
+      /*
+       * The API computes this now. It used to be decided here by scanning
+       * user.friends, which meant every profile response had to carry the
+       * whole friend list -- so any logged-in visitor could read anyone's
+       * social graph just to render one button. A non-owner response now
+       * carries isFriend and friendCount instead of the list.
+       *
+       * Own profile still returns the full array, so fall back to it.
+       */
       const cid = currentUser?._id || currentUser?.id;
-      setIsFriend(res.data.user.friends?.some(f => (f._id || f) === cid));
+      setIsFriend(
+        res.data.user.isFriend
+        ?? res.data.user.friends?.some(f => (f._id || f) === cid)
+        ?? false
+      );
     } catch (err) {
       /*
        * Not an ejection. This used to toast "Profile not found" and
@@ -285,8 +298,14 @@ export default function Profile() {
                 </div>
                 {profile.bio && <p style={{ color: 'var(--text-secondary)', marginBottom: 10, fontSize: 15 }}>{profile.bio}</p>}
                 <div style={{ display: 'flex', gap: 20, fontSize: 14, color: 'var(--text-muted)', flexWrap: 'wrap' }}>
-                  <span>📧 {profile.email}</span>
-                  {profile.phone && <span>📱 {profile.phone}</span>}
+                  {/*
+                    * Contact details are yours alone. The API stopped sending
+                    * them for other people, so this is not what protects them --
+                    * it is here so the row does not render an empty envelope
+                    * icon on someone else's profile.
+                    */}
+                  {isOwnProfile && profile.email && <span>📧 {profile.email}</span>}
+                  {isOwnProfile && profile.phone && <span>📱 {profile.phone}</span>}
                   <span>📅 Joined {formatDistanceToNow(new Date(profile.createdAt), { addSuffix: true })}</span>
                 </div>
               </>

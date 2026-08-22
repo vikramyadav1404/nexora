@@ -393,7 +393,9 @@ export default function Settings() {
                       />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600, fontSize: 15 }}>{rname}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{req.email}</div>
+                        {/* Was req.email. Someone sending you a friend request
+                            has not consented to giving you their address. */}
+                        {req.bio && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{req.bio}</div>}
                         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>⭐ {req.points || 0} pts</div>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -446,7 +448,8 @@ export default function Settings() {
                       />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontWeight: 600 }}>{u.name}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{u.email}</div>
+                        {/* Was u.email — people search results are strangers. */}
+                        {u.bio && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{u.bio}</div>}
                         <div style={{ fontSize: 12, color: 'var(--accent)' }}>⭐ {u.points || 0} pts</div>
                       </div>
                       {isAlreadyFriend ? (

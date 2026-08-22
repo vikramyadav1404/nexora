@@ -139,18 +139,19 @@ async function getVoteLists(db, table, idCol, id) {
  * Space, which handed every member's email and phone to any logged-in user who
  * asked.
  */
+/**
+ * @deprecated Use `publicUser` from db/serialize.js.
+ *
+ * Kept only so nothing breaks on an import; it now delegates, and returns no
+ * email. It used to include one, which is the bug that produced serialize.js:
+ * this function existed specifically to be the safe shape for other people, was
+ * used in four places whose comments said it withheld contact details, and
+ * withheld only the phone number.
+ *
+ * Do not add fields here. Add them to the allowlist in db/serialize.js.
+ */
 function shapePerson(u) {
-  return {
-    _id: u.id,
-    id: u.id,
-    name: u.name,
-    avatar: u.avatar,
-    avatarUrl: u.avatar,
-    avatarThumbUrl: u.avatar_thumb_url || u.avatar,
-    email: u.email,
-    points: u.points,
-    badges: u.badges || []
-  };
+  return require('./serialize').publicUser(u);
 }
 
 /**

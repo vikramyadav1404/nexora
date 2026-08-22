@@ -3,7 +3,7 @@ const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
 const { requireVerifiedEmail } = require('../middleware/requireVerifiedEmail');
-const { shapePerson } = require('../db/helpers');
+const { publicUser } = require('../db/serialize');
 const { writeLimiter } = require('../middleware/rateLimit');
 const { sanitizeText } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
@@ -56,8 +56,10 @@ router.get('/blocks', protect, asyncHandler(async (req, res) => {
   if (!ids.length) return res.json({ blocks: [] });
 
   const { data: users } = await db.from('users').select('*').in('id', ids);
-  // The people you blocked are still other people -- no contact details.
-  res.json({ blocks: (users || []).map(shapePerson) });
+  // The people you blocked are still other people. publicUser, not shapePerson:
+  // that one kept email, so this list handed over the address of everyone you
+  // had blocked -- the last people you would want holding yours, or you theirs.
+  res.json({ blocks: (users || []).map(publicUser) });
 }, "Could not complete that request"));
 
 // POST /api/reports

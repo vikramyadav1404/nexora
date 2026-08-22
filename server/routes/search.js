@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
 const { protect } = require('../middleware/auth');
-const { shapePerson, shapePost, shapeQuestion, loadAuthorMap } = require('../db/helpers');
+const { shapePost, shapeQuestion, loadAuthorMap } = require('../db/helpers');
+const { publicUser } = require('../db/serialize');
 const { INTERESTS } = require('../db/interests');
 const { escapePostgrestValue } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
@@ -147,12 +148,16 @@ router.get('/', protect, asyncHandler(async (req, res) => {
   }
 
   /*
-   * shapePerson, not shapeUser. This returns up to ten arbitrary users to any
-   * logged-in caller, and shapeUser carries email, phone and role -- so /api/search
-   * was handing out contact details for strangers. /api/users/search already
-   * used the narrow shape; this one was missed.
+   * publicUser, the allowlist shape. This returns up to ten arbitrary users to
+   * any logged-in caller, so it must carry nothing personal.
+   *
+   * This line said shapePerson before, with a comment claiming the contact-detail
+   * problem was solved. It was not: shapePerson dropped phone and kept email, so
+   * a search for a common first name still returned ten strangers' addresses --
+   * and Search.jsx rendered one as the result subtitle whenever a person had no
+   * interests set. The comment is why nobody re-checked.
    */
-  const people = peopleRows.map(shapePerson);
+  const people = peopleRows.map(publicUser);
 
   // One author query for both result sets, instead of one per row (was up to 20)
   const authors = await loadAuthorMap(db, [
