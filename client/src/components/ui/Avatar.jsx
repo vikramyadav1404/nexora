@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import { mediaUrl } from '../../utils/mediaUrl';
+import { useMediaFallback } from '../../hooks/useMediaFallback';
 
 /**
  * Stable hue for a user, so the same person is always the same colour.
@@ -36,8 +36,10 @@ export default function Avatar({
   style,
   ...rest
 }) {
-  const [failed, setFailed] = useState(false);
   const resolved = src ? mediaUrl(src) : '';
+  // A 401 on our own media means a missing cookie, not a missing file, so this
+  // retries once before degrading to the initial.
+  const { src: imgSrc, failed, onError } = useMediaFallback(resolved);
   const initial = (name || '?').trim().charAt(0).toUpperCase() || '?';
   const hue = hueFrom(userId || name);
 
@@ -71,14 +73,14 @@ export default function Avatar({
   return (
     <img
       className={`avatar ${className}`.trim()}
-      src={resolved}
+      src={imgSrc}
       alt={name || 'User'}
       width={size}
       height={size}
       loading="lazy"
       decoding="async"
       draggable={false}
-      onError={() => setFailed(true)}
+      onError={onError}
       style={{ width: size, height: size, ...ringStyle, ...style }}
       {...rest}
     />

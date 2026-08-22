@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ImageOff } from 'lucide-react';
 import { mediaUrl } from '../../utils/mediaUrl';
+import { useMediaFallback } from '../../hooks/useMediaFallback';
 
 /**
  * The only <img> the app should render.
@@ -26,8 +27,10 @@ export default function SmartImage({
   ...rest
 }) {
   const [loaded, setLoaded] = useState(false);
-  const [failed, setFailed] = useState(false);
   const resolved = mediaUrl(src);
+  // Same reasoning as Avatar: a 401 on proxied media is a credential problem,
+  // not a missing file, and is worth one retry before showing the glyph.
+  const { src: imgSrc, failed, onError } = useMediaFallback(resolved);
 
   return (
     <div
@@ -37,14 +40,14 @@ export default function SmartImage({
     >
       {!failed && (
         <img
-          src={resolved}
+          src={imgSrc}
           alt={alt}
           loading={eager ? 'eager' : 'lazy'}
           decoding="async"
           fetchPriority={eager ? 'high' : 'auto'}
           draggable={false}
           onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
+          onError={onError}
           className={imgClassName}
           {...rest}
         />
