@@ -250,12 +250,45 @@ async function loadLiveKeys(db, kind) {
  * This is the one place a bucket listing is acceptable — it runs on a schedule,
  * never on a request path.
  */
-async function sweepOrphanedMedia() {
+/**
+ * How much of a scan may be deleted in one run before it is treated as a bug.
+ *
+ * Both times this job was wrong it was wrong the same way: it concluded that
+ * nearly everything was an orphan. The `cover_key` ternary made every post
+ * attachment unmatched by construction; the discarded error emptied the live
+ * set so nothing matched at all. In both cases the candidate list would have
+ * been close to 100% of what was scanned.
+ *
+ * So that ratio is the signal. A run over the ceiling stops and reports rather
+ * than deleting, which turns the failure that has now happened twice into a
+ * loud no-op. The floor exists because ratios are meaningless on small numbers
+ * -- deleting 2 of 3 genuinely orphaned objects is 67% and completely normal.
+ *
+ * Deleting nothing is always recoverable. Deleting everything is not. When the
+ * two readings disagree, this picks the recoverable one.
+ */
+const BREAKER_MAX_SHARE = 0.25;
+const BREAKER_FLOOR = 10;
+
+/**
+ * @param {object}  [options]
+ * @param {boolean} [options.dryRun]   report what would be deleted, delete nothing
+ * @param {boolean} [options.force]    proceed even if the breaker would trip
+ */
+async function sweepOrphanedMedia({ dryRun = false, force = false } = {}) {
   const { KIND_CONFIG, deleteObject } = require('../utils/mediaStorage');
   const db = getSupabase();
-  let removed = 0;
   let scanned = 0;
   const skipped = [];
+
+  /*
+   * Two phases, and the split is what makes the breaker possible: every
+   * candidate is collected before anything is deleted. Deciding per-object, as
+   * this used to, means the thousandth bad deletion is as unstoppable as the
+   * first -- there is no point at which the job can notice it is deleting far
+   * more than it should.
+   */
+  const candidates = [];
 
   for (const [kind, { bucket }] of Object.entries(KIND_CONFIG)) {
     const live = await loadLiveKeys(db, kind);
@@ -277,15 +310,57 @@ async function sweepOrphanedMedia() {
         if (live.has(key)) continue;
 
         // Grace period: an upload in flight has no row pointing at it yet.
-        const age = Date.now() - new Date(obj.created_at || obj.updated_at || 0).getTime();
-        if (age < 60 * 60 * 1000) continue;
+        const ageMs = Date.now() - new Date(obj.created_at || obj.updated_at || 0).getTime();
+        if (ageMs < 60 * 60 * 1000) continue;
 
-        if (await deleteObject(bucket, key)) removed += 1;
+        candidates.push({
+          bucket,
+          kind,
+          key,
+          ageHours: Math.round(ageMs / 3_600_000),
+          reason: `no row in ${LIVE_KEY_SOURCES[kind].table}.${LIVE_KEY_SOURCES[kind].column} references it`
+        });
       }
     }
   }
 
-  return skipped.length ? { scanned, removed, skipped } : { scanned, removed };
+  const ceiling = Math.max(BREAKER_FLOOR, Math.floor(scanned * BREAKER_MAX_SHARE));
+  const wouldTrip = candidates.length > ceiling;
+
+  const report = {
+    dryRun,
+    scanned,
+    candidates: candidates.length,
+    keys: candidates,
+    ...(skipped.length ? { skipped } : {})
+  };
+
+  if (wouldTrip && !force) {
+    /*
+     * Reported as ok:false with removed:0 rather than thrown. A throw here
+     * would be swallowed into /daily's errors array and read as "the job broke"
+     * -- which is a different fact from "the job worked and what it found looks
+     * wrong". The second one needs a human to look at it.
+     */
+    return {
+      ...report,
+      removed: 0,
+      aborted: true,
+      reason:
+        `would delete ${candidates.length} of ${scanned} scanned objects, over the ` +
+        `${Math.round(BREAKER_MAX_SHARE * 100)}% ceiling (${ceiling}). Refusing. ` +
+        `Re-run with force:true if this is genuinely correct.`
+    };
+  }
+
+  if (dryRun) return { ...report, removed: 0 };
+
+  let removed = 0;
+  for (const c of candidates) {
+    if (await deleteObject(c.bucket, c.key)) removed += 1;
+  }
+
+  return { ...report, removed };
 }
 
 /* ── routes ──────────────────────────────────────────────── */
@@ -309,7 +384,13 @@ router.post('/daily', async (req, res) => {
   for (const [name, job] of [
     ['transactions', sweepTransactions],
     ['rateLimits', sweepRateLimits],
-    ['orphanedMedia', sweepOrphanedMedia],
+    /*
+     * dryRun:false spelled out. It is the default, so this changes nothing --
+     * which is the point: the one caller that deletes should say so at the call
+     * site, rather than deleting because nobody passed an argument. If the
+     * default is ever flipped to safe, this line keeps working and stays true.
+     */
+    ['orphanedMedia', () => sweepOrphanedMedia({ dryRun: false })],
     // Rotation writes a row per refresh — roughly 96 per active user per day at
     // a 15-minute access lifetime. Without this the table only grows.
     ['refreshTokens', require('../utils/tokens').sweepRefreshTokens]
@@ -383,6 +464,35 @@ router.post('/sweep-rate-limits', async (req, res) => {
   if (!authorize(req, res)) return;
   try { res.json(await sweepRateLimits()); }
   catch (err) { sendError(res, err, req, 'Sweep failed'); }
+});
+
+/**
+ * POST /api/cron/sweep-media — the human entry point, dry by default.
+ *
+ * The nightly job deletes; this one reports unless told otherwise. That
+ * asymmetry is deliberate: the scheduled caller has been configured once, on
+ * purpose, and knows what it is doing. A person reaching for this route is
+ * usually trying to find out what it *would* do, and the cost of guessing
+ * wrong is objects nobody can get back.
+ *
+ * Deleting requires `{"confirm":"delete"}` in the body. Not a boolean --
+ * `{"dryRun":false}` is one typo away from being sent by something that meant
+ * the opposite, and a word cannot be arrived at by accident.
+ */
+router.post('/sweep-media', async (req, res) => {
+  if (!authorize(req, res)) return;
+
+  const confirmed = req.body?.confirm === 'delete';
+  const force = req.body?.force === true;
+
+  try {
+    const result = await sweepOrphanedMedia({ dryRun: !confirmed, force });
+    // 409 when the breaker stopped it: the request was understood and refused,
+    // which a 200 would hide from anything reading status codes.
+    res.status(result.aborted ? 409 : 200).json(result);
+  } catch (err) {
+    sendError(res, err, req, 'Sweep failed');
+  }
 });
 
 module.exports = router;
