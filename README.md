@@ -44,7 +44,7 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 | Data access | `@supabase/supabase-js` against PostgREST. **No ORM** |
 | Schema | Raw SQL, 20 numbered migrations |
 | Auth | `jsonwebtoken`, `bcryptjs`, TOTP against `node:crypto` |
-| Tests | Vitest + Supertest. 418 server (26 files), 13 client (1 file) |
+| Tests | Vitest + Supertest. 469 server (29 files), 24 client (2 files) |
 
 95 REST endpoints across 19 route modules, plus a 59-endpoint in-memory mirror for demo mode. 22 pages.
 
@@ -69,7 +69,7 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 | Video transcoding | **Not built.** Video is stored and served untouched |
 | `audit_logs` | **Not built.** Defined in `004_production.sql`, never applied. Nothing writes to it |
 | Cron dry-run mode | **Not built.** Considered after the deletion bug below; recorded rather than implied |
-| Frontend tests | **Barely started.** One module; everything else untested |
+| Frontend tests | **Barely started.** Two modules, and no component-rendering harness |
 
 ---
 
@@ -108,7 +108,7 @@ Eight findings. What was wrong, why it mattered, what it is now.
 ## What I would do next
 
 1. **A staging environment.** The bucket flip and media proxy were verified against production because there is nowhere else. Every incident here was found by audit or in production — none before deploy.
-2. **Frontend tests, starting with auth and the fetch layer.** The client holds the session, the refresh cycle and now media recovery; almost none is covered.
+2. **A component-rendering harness for the client.** There is none, which is why a page-level `ReferenceError` reached production and was found by driving real Chrome rather than by a test. The client also holds the session, the refresh cycle and media recovery; almost none is covered.
 3. **Delete demo mode or generate it.** Two hand-maintained implementations of 59 endpoints will diverge; the only question is when.
 4. **A dry-run flag on the destructive cron.** It has caused two near-total data losses and cannot say what it would delete without deleting it.
 5. **Decide on recurring billing.** Subscriptions that silently do not renew are a product decision being made by omission.
@@ -126,8 +126,8 @@ npm run dev                          # server :5000, client :5173
 No database? Set `DEMO_MODE=true` in `server/.env` — the in-memory mirror serves a working app with seeded data. Otherwise apply `server/db/migrations/*.sql` in numeric order.
 
 ```bash
-cd server && npm test                # 418 tests, no database required
-cd client && npm test                # 13 tests
+cd server && npm test                # 469 tests, no database required
+cd client && npm test                # 24 tests
 cd server && npm run check:buckets   # fails if any bucket is publicly readable
 cd client && npm run check:env       # fails if a secret is exposed to the build
 ```
