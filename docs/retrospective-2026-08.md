@@ -10,13 +10,38 @@ survived a review by someone paying attention.
 
 > **A green result that verified nothing, or a distinction that collapsed.**
 
-That framing is the whole document. If you read one section, read
-[The two shapes](#the-two-shapes).
+---
 
-Scope: this covers one codebase — a React + Express + Postgres app of roughly
-24k lines plus 8k of tests, one maintainer, no staging environment. The patterns
-generalise; the specifics are all from here, and nothing below is reconstructed
-or illustrative. Every example is a real commit.
+## The short version
+
+**Two families accounted for nearly all of it.**
+
+**False green** — a check that passed while proving nothing. Not a missing test:
+a present one, running, green, and empty. A test that pinned `email` into the
+key list of the function whose job was withholding it. An assertion matching a
+string the mock had invented. A linter reporting clean for weeks with the rule
+that would have caught the bug switched off. This is worse than no test, because
+no test is honest about the gap while a green one is an active claim.
+
+**Collapsed distinction** — two different facts rendered identically. "Nothing
+here" and "the request failed". "You may not see this" and "this does not
+exist". "I could not read the data" and "there is no data" — that one would have
+deleted every image on the platform.
+
+**Three techniques found them**, in order of yield:
+
+1. **Manual mutation** — delete the guard, confirm the test goes red, put it
+   back. This found more than the other two combined, at roughly a minute per
+   guard. It is the only way to tell a test that verifies something from a test
+   that merely runs.
+2. **"What is this check actually comparing?"** — not what it is named, not what
+   its comment claims.
+3. **"Do these two states render the same?"** — asked wherever an absence, a
+   failure and a refusal meet the same code path.
+
+Scope: one codebase — React + Express + Postgres, ~24k lines plus 8k of tests,
+one maintainer, no staging environment. Every example below is a real commit;
+nothing is reconstructed or illustrative.
 
 ---
 
