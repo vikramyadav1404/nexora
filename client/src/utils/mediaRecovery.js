@@ -49,9 +49,36 @@ let lastFailureAt = 0;
  */
 let fetchMe = () => axios.get('/api/auth/me');
 
-/** Only our own proxied media is recoverable this way. */
+/**
+ * Only our own proxied media is recoverable this way.
+ *
+ * Accepts the relative form, and an absolute URL whose origin is this page's --
+ * both are same-origin requests that carry the cookie.
+ *
+ * The absolute case is not hypothetical. The server briefly rewrote these paths
+ * to an absolute cross-origin host, and because this function only matched the
+ * relative form, the recovery path never ran for the one failure it was written
+ * for. A guard that silently does not apply is worse than one that is absent:
+ * it looks like coverage.
+ *
+ * Still not a substring match. `https://evil.test/api/media/x` is a different
+ * origin and must never trigger an authenticated call.
+ */
 export function isProxiedMedia(url) {
-  return typeof url === 'string' && url.startsWith('/api/media/');
+  if (typeof url !== 'string' || !url) return false;
+  if (url.startsWith('/api/media/')) return true;
+
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      const here = typeof location !== 'undefined' ? location.origin : null;
+      return !!here && parsed.origin === here && parsed.pathname.startsWith('/api/media/');
+    } catch {
+      return false;
+    }
+  }
+
+  return false;
 }
 
 /**

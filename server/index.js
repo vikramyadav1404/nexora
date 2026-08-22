@@ -183,9 +183,21 @@ async function startServer(opts = {}) {
   if (!process.env.PUBLIC_API_URL && process.env.RENDER_EXTERNAL_URL) {
     process.env.PUBLIC_API_URL = process.env.RENDER_EXTERNAL_URL;
   }
-  if (!process.env.PUBLIC_API_URL && process.env.VERCEL_URL) {
-    process.env.PUBLIC_API_URL = `https://${process.env.VERCEL_URL}`;
-  }
+
+  /*
+   * VERCEL_URL is deliberately NOT used to derive PUBLIC_API_URL.
+   *
+   * It is the per-deployment immutable hostname -- a different value on every
+   * deploy, and never the alias anything else refers to. Deriving a *public*
+   * URL from it produced the avatar outage: publicAssetUrl prepended it to the
+   * relative /api/media/... paths migration 017 had just created, so every
+   * avatar and cover was served as an absolute cross-origin URL. The
+   * nexora_media cookie is host-scoped to the client domain, an <img> cannot
+   * send it cross-origin, and every image 401'd.
+   *
+   * Set PUBLIC_API_URL explicitly if something genuinely needs an absolute API
+   * URL, and set it to the stable alias.
+   */
 
   /*
    * Before anything else. A server that cannot sign a session correctly should

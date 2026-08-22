@@ -38,10 +38,32 @@ function authorFields() {
   return withMediaColumns(AUTHOR_FIELDS_BASE);
 }
 
-// /uploads/... needs a full host when frontend and API are on different domains
+/**
+ * The URL the client should use for a stored asset.
+ *
+ * The absolutising branch below exists for legacy `/uploads/...` paths, from
+ * when the frontend and API were on different domains and a relative path would
+ * not resolve. Nothing writes those any more -- uploads go browser → storage
+ * via /api/uploads/presign -- so in practice every value arriving here is an
+ * /api/media/... proxy path.
+ */
 function publicAssetUrl(url) {
   if (!url || typeof url !== 'string') return '';
   if (/^https?:\/\//i.test(url) || url.startsWith('data:')) return url;
+
+  /*
+   * Media proxy paths stay relative. Always.
+   *
+   * /api/media/... is authorised by the nexora_media cookie, which is
+   * host-scoped to whichever origin served the page. An <img> cannot attach it
+   * to a request for a different origin, so absolutising one of these to any
+   * other host turns every image into a guaranteed 401 -- which is exactly what
+   * happened when PUBLIC_API_URL was being derived from VERCEL_URL.
+   *
+   * Relative is not a formatting preference here. It is what makes the request
+   * same-origin, and same-origin is what carries the credential.
+   */
+  if (url.startsWith('/api/media/')) return url;
   const base = (
     process.env.PUBLIC_API_URL ||
     process.env.API_PUBLIC_URL ||

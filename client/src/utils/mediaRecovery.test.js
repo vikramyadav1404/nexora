@@ -49,9 +49,39 @@ describe('what counts as recoverable', () => {
   });
 
   it('REGRESSION: is not fooled by a lookalike host', () => {
-    // Prefix matching on a full URL would let an attacker-controlled host
-    // trigger the auth call. Only the same-origin path form qualifies.
+    // Substring matching would let an attacker-controlled host trigger the auth
+    // call. Only same-origin qualifies.
     expect(isProxiedMedia('https://evil.test/api/media/avatars/x')).toBe(false);
+    expect(isProxiedMedia('https://client-olive-ten-89.vercel.app.evil.test/api/media/x')).toBe(false);
+  });
+
+  it('REGRESSION: recognises a same-origin ABSOLUTE url', () => {
+    /*
+     * The case that made this guard useless exactly when it was needed.
+     *
+     * The server briefly rewrote media paths to an absolute host. Because this
+     * only matched the relative form, every avatar 401'd and the recovery path
+     * never ran -- the fallback was present, tested, and silently inapplicable
+     * to the one failure it existed for.
+     *
+     * jsdom is not configured here, so location is stubbed for this case.
+     */
+    const original = globalThis.location;
+    globalThis.location = { origin: 'https://client-olive-ten-89.vercel.app' };
+    try {
+      expect(isProxiedMedia('https://client-olive-ten-89.vercel.app/api/media/avatars/x.webp')).toBe(true);
+      // Same origin, but not a media path.
+      expect(isProxiedMedia('https://client-olive-ten-89.vercel.app/api/auth/me')).toBe(false);
+      // A media path, but the API's own host -- a different origin from the page.
+      expect(isProxiedMedia('https://nexora-api-beta.vercel.app/api/media/avatars/x.webp')).toBe(false);
+    } finally {
+      if (original === undefined) delete globalThis.location;
+      else globalThis.location = original;
+    }
+  });
+
+  it('does not throw on a malformed url', () => {
+    expect(isProxiedMedia('http://[not a url')).toBe(false);
   });
 });
 
