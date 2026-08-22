@@ -77,7 +77,7 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 
 Eight findings. What was wrong, why it mattered, what it is now.
 
-The two that changed how the project works are written up in [docs/decisions/](docs/decisions/).
+The two that changed how the project works are written up in [docs/decisions/](docs/decisions/), and [what a month of audits found](docs/retrospective-2026-08.md) covers the pattern underneath all of them.
 
 **The service-role key was reachable from the browser bundle.** That key bypasses row-level security entirely: it is the database, with no policy in front of it. Inlined into the client build, it hands every visitor full database control. Moved server-side, and made unrepeatable: `client/scripts/check-env.js` fails `npm run build` on any `VITE_`-prefixed variable holding a `service_role` JWT or a secret-shaped name. A convention nothing enforces gets broken on the next hurried deploy.
 
