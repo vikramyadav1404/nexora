@@ -80,7 +80,13 @@ export default function Leaderboard() {
         {tab === 'top' && (
           <div>
             {/* Top 3 podium */}
-            {!loading && leaderboard.length >= 3 && (
+            {/*
+              * boardRes.isLoading, not `loading`. This read a bare `loading`
+              * that no longer existed after the move to useResource, so the
+              * whole page threw a ReferenceError into the error boundary --
+              * every render, for everyone.
+              */}
+            {!boardRes.isLoading && leaderboard.length >= 3 && (
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: 12, marginBottom: 28, padding: '0 20px' }}>
                 {[
                   { index: 1, height: 100, order: 0 },

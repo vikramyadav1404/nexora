@@ -151,6 +151,8 @@ function mountRealRoutes(appInstance) {
   // Authorising redirect for stored media. Buckets are private; this is the
   // only way an <img> gets at them. See routes/media.js.
   appInstance.use('/api/media', require('./routes/media'));
+  // Unauthenticated by design: the error boundary wraps logged-out pages too.
+  appInstance.use('/api/client-errors', require('./routes/clientErrors'));
   appInstance.use('/api/notifications', require('./routes/notifications'));
   appInstance.use('/api/bookmarks', require('./routes/bookmarks'));
   appInstance.use('/api/search', require('./routes/search'));

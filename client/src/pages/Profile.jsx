@@ -201,6 +201,19 @@ export default function Profile() {
     </div>
   );
 
+  /*
+   * The friend list is owner-only; a stranger gets a count instead, so their
+   * social graph is not readable by anyone who opens their profile.
+   *
+   * Two separate facts, and collapsing them is the bug this avoids: "how many
+   * friends" is public, "who they are" is not. Reading the count off the array
+   * made every other profile show 0, and because `undefined === 0` is false the
+   * friends tab skipped its empty state and mapped over undefined -- rendering a
+   * blank panel that said "Friends (0)". A privacy boundary should not look like
+   * an empty life.
+   */
+  const friendCount = profile.friendCount ?? profile.friends?.length ?? 0;
+  const canSeeFriendList = Array.isArray(profile.friends);
 
   return (
     <div className="page-container">
@@ -390,7 +403,7 @@ export default function Profile() {
         <div className="stats-grid" style={{ marginBottom: 24 }}>
           {[
             { value: profile.points || 0, label: 'Points', color: 'var(--accent)', icon: '⭐' },
-            { value: profile.friends?.length || 0, label: 'Friends', color: 'var(--secondary)', icon: '👥' },
+            { value: friendCount, label: 'Friends', color: 'var(--secondary)', icon: '👥' },
             { value: profile.totalAnswers || 0, label: 'Answers', color: 'var(--success)', icon: '✍️' },
             { value: profile.totalUpvotesReceived || 0, label: 'Upvotes', color: 'var(--primary-light)', icon: '👍' }
           ].map(s => (
@@ -421,7 +434,7 @@ export default function Profile() {
                 { label: 'Points', value: <span style={{ color: 'var(--accent)', fontWeight: 700 }}>⭐ {profile.points || 0}</span> },
                 { label: 'Language', value: profile.language?.toUpperCase() || 'EN' },
                 { label: 'Total Answers', value: profile.totalAnswers || 0 },
-                { label: 'Total Friends', value: profile.friends?.length || 0 }
+                { label: 'Total Friends', value: friendCount }
               ].map(item => (
                 <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--border-soft)' }}>
                   <span style={{ color: 'var(--text-muted)', fontSize: 14 }}>{item.label}</span>
@@ -479,8 +492,14 @@ export default function Profile() {
 
         {tab === 'friends' && (
           <div className="glass-card" style={{ padding: 24 }}>
-            <h3 style={{ marginBottom: 16 }}>Friends ({profile.friends?.length || 0})</h3>
-            {profile.friends?.length === 0 ? (
+            <h3 style={{ marginBottom: 16 }}>Friends ({friendCount})</h3>
+            {!canSeeFriendList ? (
+              <div className="empty-state" style={{ padding: '40px 0' }}>
+                <Users size={40} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+                <h3>{friendCount === 1 ? '1 connection' : `${friendCount} connections`}</h3>
+                <p>Only {profile.name?.split(' ')[0] || 'they'} can see who they are connected with.</p>
+              </div>
+            ) : profile.friends.length === 0 ? (
               <div className="empty-state" style={{ padding: '40px 0' }}>
                 <Users size={40} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
                 <h3>No friends yet</h3>
