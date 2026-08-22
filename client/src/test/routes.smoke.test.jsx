@@ -20,7 +20,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { apiMock, installBrowserStubs, goTo, boundaryRendered, requests } from './harness.jsx';
-import { ME, OTHER } from './fixtures.js';
+import { ME, OTHER, FIXTURES } from './fixtures.js';
 
 // Hoisted by vitest, so the app's own import of this module is replaced before
 // any page is loaded.
@@ -146,6 +146,78 @@ describe('the harness itself', () => {
     render(<App />);
     await waitFor(() => {
       expect(requests.some(([, url]) => url.includes('/api/auth/me'))).toBe(true);
+    }, { timeout: 5000 });
+  }, 20000);
+});
+
+describe('the environment banner', () => {
+  /*
+   * Every route test above runs with VITE_ENVIRONMENT undefined, so the banner
+   * is present in all of them and none of them would notice if it stopped
+   * distinguishing anything. The matrix that matters is build x api, and it is
+   * only meaningful because the absent case sits beside the present ones.
+   *
+   * vi.stubEnv reaches import.meta.env, which is where the build-time half
+   * actually comes from -- asserting against a hand-passed argument would test
+   * the classifier again rather than the component reading its own environment.
+   */
+  const original = FIXTURES['/api/version'];
+
+  afterEach(() => {
+    FIXTURES['/api/version'] = original;
+    vi.unstubAllEnvs();
+  });
+
+  const mount = async (buildEnv, apiEnv) => {
+    vi.stubEnv('VITE_ENVIRONMENT', buildEnv);
+    FIXTURES['/api/version'] = { ...original, environment: apiEnv, isProduction: apiEnv === 'production' };
+    goTo('/leaderboard');
+    const { container } = render(<App />);
+    await waitFor(() => {
+      expect(container.querySelector('.page-container')).toBeTruthy();
+    }, { timeout: 5000 });
+    return container;
+  };
+
+  const bannerIn = (c) => c.querySelector('[data-testid="environment-banner"]');
+
+  it('REGRESSION: renders nothing when both halves agree on production', async () => {
+    const container = await mount('production', 'production');
+    // Give the /api/version round trip a chance to arrive and escalate.
+    await new Promise(r => setTimeout(r, 50));
+    expect(bannerIn(container), 'a banner appeared on a production build').toBeNull();
+  }, 20000);
+
+  it('REGRESSION: renders on a staging deployment', async () => {
+    const container = await mount('staging', 'staging');
+    await waitFor(() => {
+      const banner = bannerIn(container);
+      expect(banner, 'no banner on a staging deployment').toBeTruthy();
+      expect(banner.getAttribute('data-env-kind')).toBe('labelled');
+      expect(banner.textContent).toMatch(/synthetic/i);
+    }, { timeout: 5000 });
+  }, 20000);
+
+  it('REGRESSION: renders on a deployment nobody configured', async () => {
+    // The likeliest real mistake: staging shipped without VITE_ENVIRONMENT.
+    const container = await mount(undefined, 'staging');
+    await waitFor(() => {
+      expect(bannerIn(container), 'an unconfigured build was treated as production').toBeTruthy();
+    }, { timeout: 5000 });
+  }, 20000);
+
+  it('REGRESSION: a staging build on the production API renders the loud variant', async () => {
+    /*
+     * The case a banner alone cannot catch, and the reason the API value is
+     * fetched at all. The page would otherwise be labelled staging while every
+     * write lands on real data -- worse than no label, because it reassures.
+     */
+    const container = await mount('staging', 'production');
+    await waitFor(() => {
+      const banner = bannerIn(container);
+      expect(banner, 'no banner on a mismatched deployment').toBeTruthy();
+      expect(banner.getAttribute('data-env-kind')).toBe('mismatch');
+      expect(banner.textContent).toMatch(/mismatch/i);
     }, { timeout: 5000 });
   }, 20000);
 });

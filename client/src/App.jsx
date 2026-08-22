@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Navbar from './components/Navbar';
+import EnvironmentBanner from './components/EnvironmentBanner';
 import MobileNav from './components/MobileNav';
 import ErrorBoundary from './components/ErrorBoundary';
 import useScrollRestoration from './hooks/useScrollRestoration';
@@ -254,6 +255,12 @@ function App() {
           <DocumentTitle />
           <ScrollManager />
           <RealtimeBridge />
+          {/*
+            * Above the routes, so no page can render without it and no page can
+            * choose not to. Returns null in production, so this costs nothing
+            * there. See components/EnvironmentBanner.jsx.
+            */}
+          <EnvironmentBanner />
           <AppRoutes />
           <Toaster
             position="bottom-center"

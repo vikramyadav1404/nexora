@@ -99,6 +99,9 @@ export const FIXTURES = {
   '/api/auth/me': { user: CURRENT_USER },
   '/api/auth/mfa/status': { enabled: false, backupCodesRemaining: 0 },
   '/api/health': { status: 'ok' },
+  // The banner reads this. 'production' so the smoke suite renders the app as
+  // production sees it -- a banner in every snapshot would mask its absence.
+  '/api/version': { name: 'nexora', environment: 'production', isProduction: true, commit: 'test', stamped: true },
 
   '/api/posts': { posts: [post('p1'), post('p2')], nextCursor: null },
   '/api/questions': { questions: [question('q1')], nextCursor: null },

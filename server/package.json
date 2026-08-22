@@ -18,7 +18,8 @@
     "keepalive": "node -e \"require('dotenv').config();fetch((process.env.PUBLIC_API_URL||'http://localhost:5000')+'/api/cron/keepalive').then(r=>r.json()).then(j=>console.log(j)).catch(e=>console.error(e.message))\"",
     "stamp": "node scripts/stamp-version.js",
     "deploy": "npm run stamp && vercel deploy --prod --yes",
-    "check:buckets": "node scripts/check-buckets.js"
+    "check:buckets": "node scripts/check-buckets.js",
+    "seed:staging": "node scripts/seed-staging.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

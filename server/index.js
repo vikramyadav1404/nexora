@@ -8,6 +8,7 @@ const fs = require('fs');
 const { apiLimiter } = require('./middleware/rateLimit');
 const { setMediaColumnSupport } = require('./db/helpers');
 const { shouldUseDemoMode, mayPublishDemoLogin } = require('./utils/demoMode');
+const { appEnv, isProduction } = require('./utils/appEnv');
 const { assertJwtSecret } = require('./utils/tokens');
 const { isAllowedOrigin, allowedOrigins } = require('./utils/corsOrigins');
 
@@ -120,7 +121,17 @@ app.get('/api/version', (req, res) => {
   res.json({
     ...appVersion,
     demoMode: null,
-    env: process.env.NODE_ENV || 'development'
+    env: process.env.NODE_ENV || 'development',
+    /*
+     * `environment` is not `env`. NODE_ENV is 'production' on every Vercel
+     * build including staging, so it cannot distinguish deployments; APP_ENV
+     * is set per project and can. The client cross-checks its own build-time
+     * value against this one -- a staging bundle talking to the production API
+     * is the specific mistake that puts a destructive test on real data, and
+     * neither side can detect it alone.
+     */
+    environment: appEnv(),
+    isProduction: isProduction()
   });
 });
 
