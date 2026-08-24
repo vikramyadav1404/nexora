@@ -137,7 +137,9 @@ async function main() {
       onboarding_completed: true,
       points: 40 + i * 17,
       total_answers: i % 5,
-      subscription_plan: i === 0 ? 'pro' : 'free'
+      // free|bronze|silver|gold -- users_subscription_plan_check. 'pro' is not
+      // a plan this schema allows, and the constraint is the authority.
+      subscription_plan: i === 0 ? 'gold' : 'free'
     }, { onConflict: 'email' }).select('id, name, email').single();
 
     if (error) throw new Error(`creating ${email}: ${error.message}`);

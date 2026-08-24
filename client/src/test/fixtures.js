@@ -53,7 +53,10 @@ export const CURRENT_USER = {
   onboardingCompleted: true,
   language: 'en',
   gender: 'male',
-  subscription: { plan: 'pro', expiresAt: '2027-01-01T00:00:00Z', razorpaySubscriptionId: '', trialUsedAt: null },
+  // gold, not 'pro' -- users_subscription_plan_check allows only
+  // free|bronze|silver|gold. A fixture describing a state the database
+  // rejects makes the smoke suite render something production cannot produce.
+  subscription: { plan: 'gold', expiresAt: '2027-01-01T00:00:00Z', razorpaySubscriptionId: '', trialUsedAt: null },
   questionsToday: 0,
   postsToday: 0,
   challengeProgress: {},
