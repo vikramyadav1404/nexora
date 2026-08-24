@@ -46,6 +46,11 @@ jobs:
           cache-dependency-path: client/package-lock.json
 
       - run: npm ci
+      # npm test was missing here until 2026-08-22. The client suite existed,
+      # passed locally, and never once ran in CI -- so the badge was green
+      # while nothing it claims to cover was exercised. See
+      # docs/decisions/0003-verify-that-the-check-ran.md
+      - run: npm test
       - run: npm run lint
       - run: npm run build
 

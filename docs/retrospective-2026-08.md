@@ -434,3 +434,5 @@ to it.
   — allowlist serialisation, and why a privacy change is a data-shape change
 - [`docs/decisions/0002`](decisions/0002-lint-must-be-configured-to-look.md)
   — the linter calibration
+- [`docs/decisions/0003`](decisions/0003-verify-that-the-check-ran.md)
+  — six checks that reported success without running, and what to do instead
