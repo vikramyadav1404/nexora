@@ -71,9 +71,17 @@ BEGIN
   -- Serialises concurrent voters on the same author.
   PERFORM 1 FROM users WHERE id = p_user_id FOR UPDATE;
 
-  SELECT COALESCE(points, 0), COALESCE(total_upvotes_received, 0), COALESCE(total_answers, 0)
+  -- Every read is qualified with `users.`. Two of the OUT columns this function
+  -- RETURNS -- `points` and `total_upvotes_received` -- share their names with
+  -- the columns being read, so a bare `points` here is ambiguous between the
+  -- OUT variable and the table column, and Postgres raises 42702 at call time.
+  -- The function was never callable as written; it was only ever exercised by
+  -- the JS reimplementation in the test fake, which is why the suite stayed
+  -- green while every real vote 500'd. Qualifying the reads resolves it without
+  -- changing the RETURNS contract the caller reads.
+  SELECT COALESCE(users.points, 0), COALESCE(users.total_upvotes_received, 0), COALESCE(users.total_answers, 0)
     INTO v_points, v_upvotes, v_answers
-    FROM users WHERE id = p_user_id;
+    FROM users WHERE users.id = p_user_id;
 
   IF v_points IS NULL THEN
     RAISE EXCEPTION 'user not found' USING ERRCODE = 'no_data_found';

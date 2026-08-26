@@ -19,7 +19,9 @@
     "stamp": "node scripts/stamp-version.js",
     "deploy": "npm run stamp && vercel deploy --prod --yes",
     "check:buckets": "node scripts/check-buckets.js",
-    "seed:staging": "node scripts/seed-staging.js"
+    "seed:staging": "node scripts/seed-staging.js",
+    "verify:functions": "node scripts/verify-functions.js",
+    "test:contract": "vitest run test/sqlFunctions.contract.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
@@ -41,6 +43,7 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.0",
+    "pg": "^8.23.0",
     "supertest": "^7.2.2",
     "vitest": "^4.1.10"
   },

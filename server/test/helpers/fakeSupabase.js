@@ -173,6 +173,53 @@ function createFakeSupabase(seed = {}) {
     ...seed
   };
 
+  /**
+   * The real named parameters of each SQL function, from the migration files.
+   *
+   * PostgREST matches an RPC call by its named parameters; a call with a wrong
+   * name returns PGRST202 (function not found for that signature). So the fake
+   * reimplementing a function is not enough — if a caller drifts from
+   * `p_from_user` to `p_sender`, the real DB would refuse the call while the
+   * fake, destructuring by name, would read `undefined` and quietly compute the
+   * wrong answer. That exact drift is what made a production probe wrong during
+   * the audit.
+   *
+   * assertRpcSignature turns that silent divergence into a loud test failure:
+   * an unknown or missing parameter throws here, where a test will see it.
+   */
+  const RPC_SIGNATURES = {
+    apply_vote_points: { required: ['p_user_id', 'p_points_delta', 'p_upvotes_delta'] },
+    claim_daily_quota: { required: ['p_user_id', 'p_kind', 'p_limit'] },
+    transfer_points: { required: ['p_from_user', 'p_to_user', 'p_points'], optional: ['p_message'] },
+    rate_limit_hit: { required: ['p_key', 'p_window_ms'] },
+    rate_limit_reset: { required: ['p_key'] }
+  };
+
+  function assertRpcSignature(name, args = {}) {
+    const sig = RPC_SIGNATURES[name];
+    if (!sig) return; // handler with no declared signature — nothing to check
+    const allowed = new Set([...(sig.required || []), ...(sig.optional || [])]);
+
+    for (const key of Object.keys(args)) {
+      if (!allowed.has(key)) {
+        throw new Error(
+          `fakeSupabase: rpc('${name}') called with unexpected parameter '${key}'. ` +
+          `The real function takes (${[...allowed].join(', ')}); PostgREST would ` +
+          `answer PGRST202 for this call. A parameter-name drift is a real bug — ` +
+          `fix the caller, not this guard.`
+        );
+      }
+    }
+    for (const key of sig.required || []) {
+      if (!(key in args)) {
+        throw new Error(
+          `fakeSupabase: rpc('${name}') is missing required parameter '${key}'. ` +
+          `The real function would not match this call.`
+        );
+      }
+    }
+  }
+
   const rpcHandlers = {
     /**
      * Mirrors migration 016's apply_vote_points.
@@ -391,6 +438,7 @@ function createFakeSupabase(seed = {}) {
           error: { code: 'PGRST202', message: `Could not find the function public.${name}` }
         });
       }
+      assertRpcSignature(name, args);
       return Promise.resolve(handler(args));
     }
   };

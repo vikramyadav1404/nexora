@@ -90,6 +90,38 @@ function verificationQuery(names) {
   );
 }
 
+/**
+ * A trailing block that records each bundled file in the schema_migrations
+ * ledger (migration 019), so "what is applied here?" stops being unanswerable.
+ *
+ * Guarded on the table existing: a bundle that predates 019, or an apply against
+ * a database that never got the ledger, skips this silently rather than erroring.
+ * The ledger is an audit trail, not a mechanism — it must never be the reason a
+ * migration paste fails. Uses a named dollar-quote so it does not disturb the
+ * `$$` balance check above.
+ */
+function ledgerBlock(names) {
+  const rows = names
+    .map((f) => `('${f.slice(0, 3)}', '${f.replace(/'/g, "''")}')`)
+    .join(',\n      ');
+
+  return (
+    '\n\n-- ############################################################\n' +
+    '-- Record what was applied (migration 019 ledger). Skips silently if the\n' +
+    '-- ledger table is not present, so this can never break a paste.\n' +
+    '-- ############################################################\n\n' +
+    'DO $ledger$\n' +
+    'BEGIN\n' +
+    "  IF to_regclass('public.schema_migrations') IS NOT NULL THEN\n" +
+    '    INSERT INTO schema_migrations (version, name) VALUES\n' +
+    `      ${rows}\n` +
+    '    ON CONFLICT (version) DO NOTHING;\n' +
+    '  END IF;\n' +
+    'END\n' +
+    '$ledger$;\n'
+  );
+}
+
 /** Accepts '5', '005', or '005_hardening.sql' — whatever is quickest to type. */
 function resolve(token, available) {
   if (available.includes(token)) return token;
@@ -153,6 +185,7 @@ function build(names, { verify = false } = {}) {
       `${body.trimEnd()}\n`;
   }
 
+  sql += ledgerBlock(names);
   return verify ? sql + verificationQuery(names) : sql;
 }
 
