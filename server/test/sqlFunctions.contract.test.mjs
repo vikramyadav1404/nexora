@@ -45,12 +45,46 @@ function functionBlock(sql, name) {
 const U = '00000000-0000-4000-8000-00000000000a';
 const V = '00000000-0000-4000-8000-00000000000b';
 
+/**
+ * Refuse to run destructive setup against anything that is not a throwaway.
+ *
+ * This test DROPs and CREATEs tables. Decision 0005 exists because a throwaway
+ * cluster once collided with a real Postgres service on the same port, and a
+ * successful connection was read as "my scratch DB" — DDL then ran against the
+ * real instance. A connection proves something is listening, not which thing.
+ *
+ * So before any DROP, ask the target what it contains. A real Nexora database
+ * holds application tables this test never creates (`posts`, `questions`,
+ * `comments`, `notifications`). Their presence means the target is real —
+ * refuse, whatever CONTRACT_DB_URL claimed. Data-derived, the same shape as the
+ * seed guard: identity read from the target, not inferred from the reach.
+ */
+async function assertThrowawayTarget(client) {
+  const { rows } = await client.query(
+    `SELECT tablename FROM pg_tables
+      WHERE schemaname = 'public'
+        AND tablename IN ('posts','questions','comments','notifications','bookmarks','friendships')`
+  );
+  if (rows.length) {
+    const db = (await client.query('SELECT current_database() AS d')).rows[0].d;
+    throw new Error(
+      `Refusing to run the contract test against database "${db}": it contains ` +
+      `real application tables (${rows.map(r => r.tablename).join(', ')}). ` +
+      `CONTRACT_DB_URL must point at a disposable throwaway, never a real Nexora ` +
+      `database — this test DROPs tables. See docs/decisions/0005.`
+    );
+  }
+}
+
 run('SQL race-guard functions (real Postgres)', () => {
   let client;
 
   beforeAll(async () => {
     client = new pg.Client({ connectionString: DB_URL });
     await client.connect();
+
+    // 0005: prove the target's identity before destroying anything.
+    await assertThrowawayTarget(client);
 
     // Minimal schema the three functions touch. Scratch names, dropped after.
     await client.query(`
@@ -174,5 +208,36 @@ run('SQL race-guard functions (real Postgres)', () => {
       await expect(client.query('SELECT * FROM transfer_points($1,$2,95,$3)', [U, V, '']))
         .rejects.toThrow(/insufficient points/i);
     });
+  });
+});
+
+/**
+ * The throwaway-target guard runs offline (no real DB needed) with a stub
+ * client, because its whole job is to keep the destructive setup above from
+ * touching the wrong database — and that has to be verified everywhere the
+ * suite runs, not only where CONTRACT_DB_URL is set.
+ */
+describe('assertThrowawayTarget (decision 0005, enforced)', () => {
+  // Faithful to the real query: it only returns public tables that are ALSO in
+  // the app-table watchlist, so the stub filters the same way. A stub that
+  // returned every table regardless would be another fake more permissive than
+  // the thing it stands for — the exact trap 0004 is about.
+  const WATCH = ['posts', 'questions', 'comments', 'notifications', 'bookmarks', 'friendships'];
+  const stub = (tables) => ({
+    query: async (sql) =>
+      /current_database/i.test(sql)
+        ? { rows: [{ d: 'scratch' }] }
+        : { rows: tables.filter((t) => WATCH.includes(t)).map((t) => ({ tablename: t })) }
+  });
+
+  it('REGRESSION: refuses a target holding real application tables', async () => {
+    await expect(assertThrowawayTarget(stub(['users', 'posts', 'questions'])))
+      .rejects.toThrow(/real application tables/i);
+  });
+
+  it('allows an empty or scratch-only target', async () => {
+    await expect(assertThrowawayTarget(stub([]))).resolves.toBeUndefined();
+    await expect(assertThrowawayTarget(stub(['users', 'answer_votes', 'point_transfers'])))
+      .resolves.toBeUndefined();
   });
 });
