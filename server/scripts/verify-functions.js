@@ -28,40 +28,15 @@
  */
 require('dotenv').config();
 const { getSupabase } = require('../db/supabase');
-
-const NIL_A = '00000000-0000-4000-8000-000000000000';
-const NIL_B = '00000000-0000-4000-8000-000000000001';
-
-// name → [args, the domain error message it raises for a nil id when healthy]
-const PROBES = {
-  apply_vote_points: [{ p_user_id: NIL_A, p_points_delta: 0, p_upvotes_delta: 0 }, /not found/i],
-  claim_daily_quota: [{ p_user_id: NIL_A, p_kind: 'question', p_limit: 1 }, /not found/i],
-  transfer_points: [{ p_from_user: NIL_A, p_to_user: NIL_B, p_points: 1, p_message: '' }, /not found/i]
-};
-
-function classify(error, healthyPattern) {
-  if (!error) return { state: 'PRESENT', detail: 'ran' };
-  if (error.code === 'PGRST202') return { state: 'MISSING', detail: 'migration not applied' };
-  // Its own "not found" for a nil id means the body executed to completion.
-  if (healthyPattern.test(error.message || '') || error.code === 'P0002') {
-    return { state: 'PRESENT', detail: 'ran (raised its own not-found)' };
-  }
-  return { state: 'BROKEN', detail: `${error.code || '?'}: ${(error.message || '').slice(0, 60)}` };
-}
-
-async function verifyFunctions(db) {
-  const results = {};
-  for (const [name, [args, pattern]] of Object.entries(PROBES)) {
-    const { error } = await db.rpc(name, args);
-    results[name] = classify(error, pattern);
-  }
-  return results;
-}
+// The check logic lives in utils/ so the boot assertion in index.js can require
+// it without a serverless-bundling gamble. This CLI is the manual/warn-only
+// front end for the same function.
+const { verifyRaceFunctions, classify, PROBES } = require('../utils/raceFunctions');
 
 async function main() {
   const strict = process.argv.includes('--strict');
   const db = getSupabase();
-  const results = await verifyFunctions(db);
+  const results = await verifyRaceFunctions(db);
 
   let bad = 0;
   console.log('\n  Race-guard SQL functions:\n');
@@ -84,10 +59,10 @@ async function main() {
   }
 }
 
-// Exported for a future boot assertion and for tests. Setting process.exitCode
-// rather than calling process.exit keeps the Supabase client's handles from
-// aborting the event loop mid-drain on Windows.
-module.exports = { verifyFunctions, classify, PROBES };
+// Re-exported for tests. The boot assertion imports from utils/raceFunctions
+// directly. Setting process.exitCode rather than calling process.exit keeps the
+// Supabase client's handles from aborting the event loop mid-drain on Windows.
+module.exports = { verifyRaceFunctions, classify, PROBES };
 
 if (require.main === module) {
   main().catch((err) => {

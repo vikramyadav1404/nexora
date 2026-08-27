@@ -317,6 +317,47 @@ async function startServer(opts = {}) {
         console.error('');
       }
     }
+
+    /*
+     * The race-guard functions are NOT optional, and in production this is FATAL.
+     *
+     * The root-cause fix for the month's worst finding. apply_vote_points and
+     * claim_daily_quota were absent from production for weeks and the app
+     * silently ran a non-atomic read-modify-write in their place -- votes
+     * double-awarded, quotas farmable under concurrency -- and nothing shouted,
+     * because a missing function degraded quietly to the racy PGRST202 fallback
+     * and the test fake reimplemented the SQL correctly enough to keep the suite
+     * green.
+     *
+     * So the boot refuses to serve when any of the three is missing or broken,
+     * naming which. The throw is inside this try, so it becomes the 503-for-all
+     * path below rather than an uncaught crash -- a dead runtime with a readable
+     * reason, not FUNCTION_INVOCATION_FAILED. Local dev (not production) warns
+     * instead of dying, so a mid-migration database does not block work.
+     *
+     * verifyRaceFunctions lives in utils/ on purpose: index.js already pulls in
+     * many utils, so the bundler certainly follows this one. A require reaching
+     * into scripts/ would be a bundling gamble that only fails in production.
+     */
+    {
+      const { verifyRaceFunctions } = require('./utils/raceFunctions');
+      const results = await verifyRaceFunctions(db);
+      const bad = Object.entries(results).filter(([, r]) => r.state !== 'PRESENT');
+      if (bad.length) {
+        console.error('');
+        console.error('  RACE-GUARD FUNCTIONS MISSING OR BROKEN:');
+        for (const [name, r] of bad) console.error(`    - ${name}: ${r.state} (${r.detail})`);
+        console.error('  Points and quota would run the non-atomic fallback, so double-spend');
+        console.error('  and quota-farming become possible. Apply migrations 015 and 016.');
+        console.error('');
+        if (process.env.NODE_ENV === 'production') {
+          const names = bad.map(([n]) => n).join(', ');
+          throw new Error(`Refusing to start: race-guard function(s) missing or broken: ${names}. Apply migrations 015 and 016.`);
+        }
+      } else {
+        console.log('Race-guard functions present: apply_vote_points, claim_daily_quota, transfer_points');
+      }
+    }
   } catch (err) {
     console.error('Supabase setup error:', err.message);
     if (shouldListen) {
