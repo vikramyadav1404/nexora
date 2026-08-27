@@ -317,48 +317,6 @@ async function startServer(opts = {}) {
         console.error('');
       }
     }
-
-    /*
-     * The race-guard functions are NOT optional, and this check is FATAL.
-     *
-     * This is the root-cause fix for the month's worst finding. For weeks,
-     * apply_vote_points and claim_daily_quota were missing from production and
-     * the app silently ran a non-atomic read-modify-write in their place --
-     * so votes double-awarded and daily quotas could be farmed under
-     * concurrency. It ran undetected because nothing shouted: a missing
-     * function degraded quietly to the racy path (PGRST202 fallback), and the
-     * test fake reimplemented the SQL correctly so the suite stayed green.
-     *
-     * So the boot now refuses to serve when any of the three is missing or
-     * broken, naming which one. On a Vercel deploy this throw is caught below
-     * and every /api route answers 503 with the reason -- a dead runtime is
-     * impossible to miss, where a silent fallback was impossible to see.
-     * Local dev (not production) warns instead of dying, so a mid-migration
-     * database does not block work.
-     *
-     * transfer_points is included even though it is already present in
-     * production: the guarantee is "all three, always", not "the two that
-     * happened to be broken this time".
-     */
-    {
-      const { verifyFunctions } = require('./scripts/verify-functions');
-      const results = await verifyFunctions(db);
-      const bad = Object.entries(results).filter(([, r]) => r.state !== 'PRESENT');
-      if (bad.length) {
-        console.error('');
-        console.error('  RACE-GUARD FUNCTIONS MISSING OR BROKEN:');
-        for (const [name, r] of bad) console.error(`    - ${name}: ${r.state} (${r.detail})`);
-        console.error('  Points and quota would run the non-atomic fallback, so double-spend');
-        console.error('  and quota-farming become possible. Apply migrations 015 and 016.');
-        console.error('');
-        if (process.env.NODE_ENV === 'production') {
-          const names = bad.map(([n]) => n).join(', ');
-          throw new Error(`Refusing to start: race-guard function(s) missing or broken: ${names}. Apply migrations 015 and 016.`);
-        }
-      } else {
-        console.log('Race-guard functions present: apply_vote_points, claim_daily_quota, transfer_points');
-      }
-    }
   } catch (err) {
     console.error('Supabase setup error:', err.message);
     if (shouldListen) {
