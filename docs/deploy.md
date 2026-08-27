@@ -64,7 +64,7 @@ Login to GitHub in the browser if Git asks.
 |-----|--------|
 | `NODE_ENV` | `production` |
 | `DEMO_MODE` | `false` |
-| `SUPABASE_URL` | `https://jcfjwpotoylzhjhhziew.supabase.co` |
+| `SUPABASE_URL` | `https://YOUR_PROJECT_REF.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | *(your secret key from Supabase)* |
 | `JWT_SECRET` | *(long random string, e.g. 40+ chars)* |
 | `CLIENT_URL` | `https://your-app.vercel.app` *(set after Step 3; can update later)* |
