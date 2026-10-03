@@ -1,5 +1,7 @@
 # Nexora
 
+ **Live:** [nexora.vikramyadav.me](https://nexora.vikramyadav.me)
+ 
 A social feed and Q&A platform built around one constraint: your daily posting allowance is a function of your network size, not your subscription. An account with no connections can post nothing; ten or more connections unlocks unlimited. Consumption and participation precede broadcast, the inverse of how most feeds onboard. Everything else — Spaces, points, subscriptions — gives that constraint something to sit on.
 
 ---
