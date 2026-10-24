@@ -46,9 +46,9 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 | Data access | `@supabase/supabase-js` against PostgREST. **No ORM** |
 | Schema | Raw SQL, 20 numbered migrations |
 | Auth | `jsonwebtoken`, `bcryptjs`, TOTP against `node:crypto` |
-| Tests | Vitest + Supertest. 469 server (29 files), 44 client (3 files) |
+| Tests | Vitest + Supertest. 495 server (32 files), 63 client (4 files) |
 
-95 REST endpoints across 19 route modules, plus a 59-endpoint in-memory mirror for demo mode. 22 pages.
+97 REST endpoints across 20 route modules, plus health, readiness and version probes, and a 59-endpoint in-memory mirror for demo mode. 22 pages.
 
 ---
 
@@ -68,10 +68,11 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 | AI assists | Implemented, optional — no-ops without `ANTHROPIC_API_KEY` |
 | Weekly digest email | Implemented, optional — no-ops without SMTP |
 | Realtime notifications | Implemented via Supabase Realtime |
+| Migration ledger | Implemented — migration `019` records every applied file; production refuses to boot if a race-guard function is missing |
 | Video transcoding | **Not built.** Video is stored and served untouched |
 | `audit_logs` | **Not built.** Defined in `004_production.sql`, never applied. Nothing writes to it |
-| Cron dry-run mode | **Not built.** Considered after the deletion bug below; recorded rather than implied |
-| Frontend tests | **Mount-level only.** Every route is smoke-tested against fixtures; no behavioural coverage |
+| Cron dry-run and circuit breaker | Implemented — the manual sweep is dry by default, and any run that would delete more than 25% of what it scanned is refused |
+| Frontend tests | Every route is mount-tested against fixtures, plus unit tests for media-401 recovery, environment detection and error-boundary triage. **No interaction-level coverage** |
 
 ---
 
@@ -87,7 +88,7 @@ The two that changed how the project works are written up in [docs/decisions/](d
 
 **CORS allowed any `*.vercel.app` origin with credentials.** Anyone can deploy to `attacker-anything.vercel.app`, which let an arbitrary site read authenticated responses for a logged-in visitor. Confirmed against production first: an unrelated `.vercel.app` origin came back echoed in `Access-Control-Allow-Origin`. Now an exact allowlist, localhost only outside production, plus an explicit escape hatch — so the next origin is added deliberately rather than by widening a pattern.
 
-**The nightly cron would have deleted every attachment.** The worst of the eight, and it was live. Two faults. The kind map was `kind === 'avatar' ? 'avatar_key' : 'cover_key'` — correct for exactly as long as there were two kinds. A third, `post`, was added later; the ternary silently answered `cover_key`, so the sweep compared post objects against cover keys, matched nothing *by construction*, and judged every attachment an orphan. Separately, the query loading live keys discarded its error — one statement timeout returned an empty set, read as "nothing is referenced", deleting every avatar and cover. One shape twice: a failure to read data treated as data. The kind map is now explicit, so an unmapped kind makes the sweep **skip** that bucket, and the key load throws rather than returning a partial set. Skipping leaks orphans; guessing deletes live files; only one is recoverable.
+**The nightly cron would have deleted every attachment.** The worst of the eight, and it was live. Two faults. The kind map was `kind === 'avatar' ? 'avatar_key' : 'cover_key'` — correct for exactly as long as there were two kinds. A third, `post`, was added later; the ternary silently answered `cover_key`, so the sweep compared post objects against cover keys, matched nothing *by construction*, and judged every attachment an orphan. Separately, the query loading live keys discarded its error — one statement timeout returned an empty set, read as "nothing is referenced", deleting every avatar and cover. One shape twice: a failure to read data treated as data. The kind map is now explicit, so an unmapped kind makes the sweep **skip** that bucket, and the key load throws rather than returning a partial set. Skipping leaks orphans; guessing deletes live files; only one is recoverable. The sweep can now also run dry, and a breaker refuses any run shaped like either bug — one that wants to delete more than a quarter of what it scanned.
 
 **Storage buckets were public.** Every avatar, cover and attachment was retrievable by anyone with the URL — no session, no authorisation — and keys are guessable enough to enumerate. Private posts were not private. Blast radius was established before the fix, not after: flipping a bucket private **invalidates every existing public URL**, so anything already shared stops working. Reads now go through `GET /api/media/:bucket/*`, which authorises the viewer, checks ownership and post visibility, then 302s to a 60-second signed URL. It refuses `Authorization` headers deliberately — the only client that matters is an `<img>`, which cannot send one. Authorisation rides on a dedicated cookie, `SameSite=Lax` not `Strict`, since `Strict` is never sent on subresource loads.
 
@@ -111,11 +112,10 @@ The two that changed how the project works are written up in [docs/decisions/](d
 
 ## What I would do next
 
-1. **A staging environment.** The bucket flip and media proxy were verified against production because there is nowhere else. Every incident here was found by audit or in production — none before deploy.
-2. **Behavioural coverage for the client.** Every route now has a mount smoke test, which closes the class that reached production — a page-level `ReferenceError` nothing looked for. What is still uncovered is behaviour: the session, the refresh cycle, media recovery, and anything that only breaks after an interaction.
+1. **Make staging the default path to production.** The runbook is in [docs/staging.md](docs/staging.md). The bucket flip and media proxy were verified against production because there was nowhere else; every incident in the first month was found by audit or in production — none before deploy.
+2. **Interaction-level coverage for the client.** Every route has a mount smoke test, and media recovery, environment detection and the error boundary have unit tests. What is still uncovered is the session, the refresh cycle, and anything that only breaks after an interaction.
 3. **Delete demo mode or generate it.** Two hand-maintained implementations of 59 endpoints will diverge; the only question is when.
-4. **A dry-run flag on the destructive cron.** It has caused two near-total data losses and cannot say what it would delete without deleting it.
-5. **Decide on recurring billing.** Subscriptions that silently do not renew are a product decision being made by omission.
+4. **Decide on recurring billing.** Subscriptions that silently do not renew are a product decision being made by omission.
 
 ---
 
@@ -130,8 +130,8 @@ npm run dev                          # server :5000, client :5173
 No database? Set `DEMO_MODE=true` in `server/.env` — the in-memory mirror serves a working app with seeded data. Otherwise apply `server/db/migrations/*.sql` in numeric order.
 
 ```bash
-cd server && npm test                # 469 tests, no database required
-cd client && npm test                # 44 tests, incl. a mount smoke test for every route
+cd server && npm test                # 495 tests, no database required
+cd client && npm test                # 63 tests, incl. a mount smoke test for every route
 cd server && npm run check:buckets   # fails if any bucket is publicly readable
 cd client && npm run check:env       # fails if a secret is exposed to the build
 ```
