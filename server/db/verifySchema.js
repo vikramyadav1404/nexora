@@ -47,10 +47,6 @@ async function main() {
     process.exit(1);
   }
 
-  if (process.env.DEMO_MODE === 'true' || process.env.DEMO_MODE === '1') {
-    console.warn('DEMO_MODE=true — set DEMO_MODE=false to use Supabase in the app.\n');
-  }
-
   const db = createClient(url, key, {
     auth: { autoRefreshToken: false, persistSession: false }
   });
@@ -125,7 +121,7 @@ async function main() {
   await db.from('users').delete().eq('id', created.id);
 
   console.log('\nDatabase OK — auth + features read/write work');
-  console.log('   Next: DEMO_MODE=false → npm run dev → register a real user\n');
+  console.log('   Next: npm run dev → register a real user\n');
   process.exit(0);
 }
 

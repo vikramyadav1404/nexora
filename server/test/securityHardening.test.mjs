@@ -6,7 +6,8 @@
  * rest and then handed out over HTTP. forgot-password was hardened against
  * account enumeration and then given a predictable password generator. The
  * paid plans got a conditional-write guard on activation while the limit they
- * sell stayed racy. Demo mode was made explicit and then reachable by accident.
+ * sell stayed racy. Demo mode was made explicit and then reachable by accident
+ * (it has since been removed; section 4 now guards what replaced it).
  *
  * So these tests are less about the guards than about the seams between
  * features, which is where all four lived.
@@ -301,13 +302,13 @@ describe('3. daily quotas cannot be raced', () => {
   });
 });
 
-describe('4. production never falls into demo mode by accident', () => {
+describe('4. the API never runs without its database', () => {
   /*
-   * The demo backend is an in-memory store that publishes a working login on an
-   * unauthenticated health endpoint. A missing SUPABASE_SERVICE_ROLE_KEY made
-   * production silently boot into it — HTTP 200, apparently healthy, and open
-   * to anyone with the published credentials. An explicit DEMO_MODE=false did
-   * not prevent it.
+   * There used to be an in-memory demo backend the server fell into when the
+   * Supabase keys were missing. A misnamed key on Vercel once booted it in
+   * production: HTTP 200, apparently healthy, no data, and a published login.
+   * The demo backend is gone (utils/supabaseConfig.js), so the only safe
+   * outcome of missing keys is not starting -- in every environment.
    */
   const saved = {};
   const KEYS = ['NODE_ENV', 'DEMO_MODE', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY'];
@@ -320,76 +321,45 @@ describe('4. production never falls into demo mode by accident', () => {
     }
   });
 
-  /*
-   * The real function, imported from utils/demoMode.js.
-   *
-   * The first version of these tests reimplemented shouldUseDemoMode here,
-   * because it lived inside index.js and requiring that starts a server. That
-   * meant they asserted against a copy: the real function could have been
-   * reverted and every test would have stayed green. It was extracted into its
-   * own module so this could import it.
-   */
-  const { shouldUseDemoMode, mayPublishDemoLogin } = require('../utils/demoMode.js');
+  // The real function, not a copy (see the module's header).
+  const { assertSupabaseConfig } = require('../utils/supabaseConfig.js');
 
-  it('REGRESSION: production with missing keys refuses to boot', () => {
-    process.env.NODE_ENV = 'production';
+  const clear = () => {
     delete process.env.DEMO_MODE;
     delete process.env.SUPABASE_URL;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
     delete process.env.SUPABASE_ANON_KEY;
+  };
 
-    expect(() => shouldUseDemoMode()).toThrow(/refusing to start in demo mode/i);
+  it('REGRESSION: missing keys refuse to start, in production and in development', () => {
+    for (const env of ['production', 'development']) {
+      process.env.NODE_ENV = env;
+      clear();
+      expect(() => assertSupabaseConfig(), env).toThrow(/refusing to start/i);
+    }
   });
 
-  it('REGRESSION: an explicit DEMO_MODE=false is not overridden into demo', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.DEMO_MODE = 'false';
+  it('REGRESSION: placeholder keys are treated as missing', () => {
+    clear();
     process.env.SUPABASE_URL = 'https://YOUR_PROJECT_REF.supabase.co';
     process.env.SUPABASE_SERVICE_ROLE_KEY = 'your_service_role_key';
-
-    expect(() => shouldUseDemoMode()).toThrow(/refusing to start in demo mode/i);
+    expect(() => assertSupabaseConfig()).toThrow(/placeholders/i);
   });
 
-  it('a deliberate DEMO_MODE=true is still honoured in production', () => {
-    // Typed out on purpose is a different thing from fallen into by accident.
-    process.env.NODE_ENV = 'production';
+  it('DEMO_MODE=true says the mode was removed instead of silently ignoring it', () => {
+    clear();
     process.env.DEMO_MODE = 'true';
-    expect(shouldUseDemoMode()).toBe(true);
+    process.env.SUPABASE_URL = 'https://abcdefgh.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'real-looking-key';
+    expect(() => assertSupabaseConfig()).toThrow(/DEMO_MODE was removed/);
   });
 
-  it('development still falls back quietly, which is the point of the fallback', () => {
-    process.env.NODE_ENV = 'development';
-    delete process.env.DEMO_MODE;
-    delete process.env.SUPABASE_URL;
-    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-    delete process.env.SUPABASE_ANON_KEY;
-
-    expect(shouldUseDemoMode()).toBe(true);
-  });
-
-  it('real keys in production use the real backend', () => {
+  it('real keys start, including with a leftover DEMO_MODE=false', () => {
+    clear();
     process.env.NODE_ENV = 'production';
-    delete process.env.DEMO_MODE;
-    process.env.SUPABASE_URL = 'https://jcfjwpotoylzhjhhziew.supabase.co';
-    process.env.SUPABASE_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.real';
-
-    expect(shouldUseDemoMode()).toBe(false);
-  });
-});
-
-describe('the demo login is never published in production', () => {
-  const saved = process.env.NODE_ENV;
-  afterEach(() => { process.env.NODE_ENV = saved; });
-
-  const { mayPublishDemoLogin } = require('../utils/demoMode.js');
-
-  it('REGRESSION: withheld in production even for a deliberate demo', () => {
-    process.env.NODE_ENV = 'production';
-    expect(mayPublishDemoLogin()).toBe(false);
-  });
-
-  it('still published locally, which is the point of a demo', () => {
-    process.env.NODE_ENV = 'development';
-    expect(mayPublishDemoLogin()).toBe(true);
+    process.env.DEMO_MODE = 'false';
+    process.env.SUPABASE_URL = 'https://abcdefgh.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'real-looking-key';
+    expect(() => assertSupabaseConfig()).not.toThrow();
   });
 });

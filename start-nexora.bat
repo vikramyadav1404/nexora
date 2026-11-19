@@ -28,10 +28,7 @@ start "Nexora-UI" cmd /k "cd /d %~dp0client && npx vite --host 127.0.0.1 --port 
 echo.
 echo  Open:  http://127.0.0.1:5173
 echo.
-echo  Demo login (if DEMO_MODE / no Supabase keys):
-echo    demo@nexora.com  /  demo1234
-echo.
-echo  Real backend: set SUPABASE keys + DEMO_MODE=false in server\.env
+echo  Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in server\.env
 echo  See: STEP_A_SUPABASE.md  and  V1_COMPLETE.md
 echo.
 pause

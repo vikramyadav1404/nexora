@@ -25,7 +25,7 @@ echo   Frontend:  http://localhost:5173
 echo   Backend:   http://localhost:5000
 echo   API Test:  http://localhost:5000/api/health
 echo.
-echo   Real mode: set SUPABASE keys + DEMO_MODE=false in server\.env
+echo   Needs:     SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in server\.env
 echo   Run SQL:   server\db\setup_step_a.sql in Supabase SQL Editor
 echo   Verify:    cd server ^&^& npm run verify:supabase
 echo  ======================================================

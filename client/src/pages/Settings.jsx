@@ -617,11 +617,7 @@ export default function Settings() {
                 onClick={async () => {
                   try {
                     const res = await axios.get('/api/health');
-                    toast.success(
-                      res.data.db === 'supabase'
-                        ? `Backend: Supabase · real · v${res.data.version || '1.0.0'}`
-                        : `Backend: Demo · v${res.data.version || '1.0.0'}`
-                    );
+                    toast.success(`Backend: ${res.data.status || 'unknown'} · v${res.data.version || '1.0.0'}`);
                   } catch {
                     toast.error('API not reachable');
                   }

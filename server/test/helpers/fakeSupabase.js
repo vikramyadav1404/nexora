@@ -1,9 +1,8 @@
 /**
  * A minimal in-memory stand-in for the Supabase JS client.
  *
- * Demo mode can't be used for these tests: `DEMO_MODE=true` mounts
- * routes/demo.js, which shadows the entire real API surface — so a test run
- * against it would exercise none of the code we actually hardened.
+ * The tests run the real routers against this, never against a second
+ * implementation of the API, so what passes here is the code that ships.
  *
  * This implements just enough of the PostgREST builder that the real routers
  * use: from().select().eq().maybeSingle()/single(), insert, update, delete,
