@@ -393,6 +393,17 @@ describe('paging ranked results', () => {
     }
   });
 
+  it('a next-page request before migration 022 is a 503 naming it, not a bare 500', async () => {
+    ranked.posts = Array.from({ length: 11 }, (_, i) => postRow(i, 1 - i / 100));
+    const first = await search('post');
+
+    rpcMissing = true;  // the 007 functions exist but take no cursor: PGRST202
+    const res = await page({ q: 'post', type: 'posts', cursor: first.body.more.posts });
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/022_search_paging\.sql/);
+  });
+
   it('the ILIKE fallback offers no cursor rather than a wrong one', async () => {
     rpcMissing = true;
     const res = await search('post');

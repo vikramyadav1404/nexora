@@ -167,7 +167,23 @@ router.get('/', protect, asyncHandler(async (req, res) => {
       p_cursor_ts: cursor.ts,
       p_cursor_id: cursor.id
     });
-    if (error) throw error;
+    if (error) {
+      /*
+       * PGRST202 here means 022 is not applied: the 007 functions exist but
+       * take no cursor. The first page still works (it passes no cursor);
+       * only "load more" cannot, so say exactly that rather than a bare 500.
+       * The message matches respond.js's safe-setup pattern, so it is a 503.
+       */
+      if (error.code === 'PGRST202') {
+        const err = new Error(
+          `${spec.fn} takes no cursor yet (PGRST202). ` +
+          'Run server/db/migrations/022_search_paging.sql in the Supabase SQL Editor.'
+        );
+        err.code = 'PGRST202';
+        throw err;
+      }
+      throw error;
+    }
     const { page, nextCursor } = pageOf(data, spec.size);
     const authors = await loadAuthorMap(db, page.map(r => r.author_id));
     const items = req.query.type === 'posts'
