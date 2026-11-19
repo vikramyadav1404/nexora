@@ -1,50 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { getSupabase } = require('../db/supabase');
-const { shapeAuthor, computeBadges, withMediaColumns } = require('../db/helpers');
+const { shapeAuthor, withMediaColumns } = require('../db/helpers');
 const { protect } = require('../middleware/auth');
 const { requireVerifiedEmail } = require('../middleware/requireVerifiedEmail');
 const { pushNotification } = require('../db/features');
 const { isValidUuid, sanitizeText } = require('../utils/validate');
 const { sendError, asyncHandler } = require('../utils/respond');
-
-// Warn once, not per request, when migration 005 has not been applied.
-let transferRpcWarned = false;
-
-/**
- * Pre-005 transfer path: read, modify, write, with no transaction.
- *
- * Kept only so the feature still works on a database that has not had
- * 005_hardening.sql applied. It is racy — two concurrent transfers can both
- * read the same balance — which is the whole reason the RPC replaced it.
- */
-async function legacyTransfer(db, sender, recipient, pts, message) {
-  const senderPoints = sender.points - pts;
-  const recipientPoints = (recipient.points || 0) + pts;
-
-  await db.from('users').update({
-    points: senderPoints,
-    badges: computeBadges(senderPoints, sender.total_answers || 0)
-  }).eq('id', sender.id);
-
-  await db.from('users').update({
-    points: recipientPoints,
-    badges: computeBadges(recipientPoints, recipient.total_answers || 0)
-  }).eq('id', recipient.id);
-
-  const { data: row } = await db.from('point_transfers').insert({
-    from_user_id: sender.id,
-    to_user_id: recipient.id,
-    points: pts,
-    message: sanitizeText(message, 200)
-  }).select().single();
-
-  return {
-    sender_points: senderPoints,
-    recipient_points: recipientPoints,
-    transfer_id: row?.id
-  };
-}
+const { missingFunctionError } = require('../utils/raceFunctions');
 
 // GET /api/rewards/leaderboard
 router.get('/leaderboard', protect, asyncHandler(async (req, res) => {
@@ -116,7 +79,7 @@ router.post('/transfer', protect, requireVerifiedEmail, asyncHandler(async (req,
     p_message: sanitizeText(message, 200)
   });
 
-  let result = Array.isArray(data) ? data[0] : data;
+  const result = Array.isArray(data) ? data[0] : data;
 
   if (error) {
     // Losing the race is a client error, not a 500.
@@ -130,23 +93,16 @@ router.post('/transfer', protect, requireVerifiedEmail, asyncHandler(async (req,
       return res.status(400).json({ message: 'Invalid transfer' });
     }
 
-    // The RPC ships in migration 005. Until that has been run, fall back to
-    // the old non-atomic path so transfers keep working — it is racy under
-    // concurrency, which is exactly why 005 exists, but a working feature
-    // beats a 500. Warned once so it does not go unnoticed.
-    if (/Could not find the function|schema cache/i.test(error.message)) {
-      if (!transferRpcWarned) {
-        transferRpcWarned = true;
-        console.warn(
-          'transfer_points RPC missing — using the non-atomic fallback, which ' +
-          'can double-spend under concurrent requests. Run ' +
-          'server/db/migrations/005_hardening.sql to fix.'
-        );
-      }
-      result = await legacyTransfer(db, sender, recipient, pts, message);
-    } else {
-      throw error;
+    /*
+     * The RPC ships in migration 005. A missing function used to fall back to
+     * a read-modify-write across two rows with no transaction — the
+     * double-spend this route was rewritten to close. Decision 0006 retired
+     * that fallback: a missing function now fails before anything is written.
+     */
+    if (error.code === 'PGRST202' || /Could not find the function|schema cache/i.test(error.message)) {
+      throw missingFunctionError('transfer_points', error);
     }
+    throw error;
   }
 
   const senderPoints = result?.sender_points ?? (sender.points - pts);

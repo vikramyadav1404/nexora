@@ -347,12 +347,13 @@ async function startServer(opts = {}) {
         console.error('');
         console.error('  RACE-GUARD FUNCTIONS MISSING OR BROKEN:');
         for (const [name, r] of bad) console.error(`    - ${name}: ${r.state} (${r.detail})`);
-        console.error('  Points and quota would run the non-atomic fallback, so double-spend');
-        console.error('  and quota-farming become possible. Apply migrations 015 and 016.');
+        console.error('  There is no non-atomic fallback any more (decision 0006): votes, posts,');
+        console.error('  questions and transfers will fail with 503 until the function exists.');
+        console.error('  Apply migrations 005, 015 and 016.');
         console.error('');
         if (process.env.NODE_ENV === 'production') {
           const names = bad.map(([n]) => n).join(', ');
-          throw new Error(`Refusing to start: race-guard function(s) missing or broken: ${names}. Apply migrations 015 and 016.`);
+          throw new Error(`Refusing to start: race-guard function(s) missing or broken: ${names}. Apply migrations 005, 015 and 016.`);
         }
       } else {
         console.log('Race-guard functions present: apply_vote_points, claim_daily_quota, transfer_points');

@@ -41,6 +41,38 @@ function classify(error, healthyPattern) {
   return { state: 'BROKEN', detail: `${error.code || '?'}: ${(error.message || '').slice(0, 60)}` };
 }
 
+/** Which migration ships each race-guard function. */
+const MIGRATION_FOR = {
+  apply_vote_points: '016_vote_points.sql',
+  claim_daily_quota: '015_quota.sql',
+  transfer_points: '005_hardening.sql'
+};
+
+/**
+ * The error a caller throws when PostgREST answers PGRST202 for a race-guard
+ * function.
+ *
+ * There used to be a non-atomic read-modify-write fallback for each of the
+ * three. Decision 0006 kept them on purpose until production had been watched
+ * with the boot check in place; that review is closed and they are gone. A
+ * missing function is now a loud failure that writes nothing, rather than a
+ * quiet switch to the racy path that lost points under concurrency.
+ *
+ * The message matches respond.js's isSafeSetupError ("Run server/db/
+ * migrations/..."), so the client gets a 503 naming the fix — the same
+ * treatment as every other unapplied-migration error here — and it still goes
+ * to error reporting as a 5xx.
+ */
+function missingFunctionError(name, cause) {
+  const err = new Error(
+    `${name} is missing (PGRST202). Run server/db/migrations/${MIGRATION_FOR[name]} ` +
+    'in the Supabase SQL Editor. There is no non-atomic fallback (decision 0006).'
+  );
+  err.code = 'PGRST202';
+  err.cause = cause;
+  return err;
+}
+
 /**
  * @param {object} db a Supabase client
  * @returns {Promise<Record<string,{state:string,detail:string}>>}
@@ -54,4 +86,4 @@ async function verifyRaceFunctions(db) {
   return results;
 }
 
-module.exports = { verifyRaceFunctions, classify, PROBES };
+module.exports = { verifyRaceFunctions, classify, PROBES, MIGRATION_FOR, missingFunctionError };

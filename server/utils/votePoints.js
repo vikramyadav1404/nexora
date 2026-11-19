@@ -1,6 +1,4 @@
-const { computeBadges } = require('../db/helpers');
-
-let warnedMissing = false;
+const { missingFunctionError } = require('./raceFunctions');
 
 /**
  * Move a user's points and upvote counter by a delta, atomically.
@@ -35,46 +33,14 @@ async function applyVotePoints(db, userId, pointsDelta, upvotesDelta) {
   }
 
   /*
-   * PGRST202 means migration 016 has not been applied. Fall back to the old
-   * read-modify-write so voting keeps working, warned once. Any other error is
-   * a real failure and must surface -- swallowing it would leave the vote row
-   * written and the author's points silently unchanged, which is the
-   * inconsistency this function exists to prevent.
+   * Every error surfaces, PGRST202 ("function missing") included. The old
+   * read-modify-write fallback for PGRST202 is gone -- decision 0006 -- because
+   * it was the very race this function exists to close. Swallowing any error
+   * here would leave the vote row written and the author's points silently
+   * unchanged.
    */
-  if (error.code !== 'PGRST202') throw error;
-
-  if (!warnedMissing) {
-    warnedMissing = true;
-    console.warn('apply_vote_points missing (migration 016 not applied) — vote points are not race-safe');
-  }
-
-  return legacyApply(db, userId, pointsDelta, upvotesDelta);
-}
-
-/** Pre-016 behaviour, kept only for databases without the function. */
-async function legacyApply(db, userId, pointsDelta, upvotesDelta) {
-  const { data: user, error } = await db
-    .from('users')
-    .select('points, total_upvotes_received, total_answers')
-    .eq('id', userId)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!user) return { points: 0, totalUpvotes: 0, badges: [] };
-
-  const points = Math.max(0, (user.points || 0) + pointsDelta);
-  const totalUpvotes = Math.max(0, (user.total_upvotes_received || 0) + upvotesDelta);
-  const badges = computeBadges(points, user.total_answers || 0);
-
-  // The error is checked here, unlike the write this replaced: a failed points
-  // update used to be discarded, leaving the vote recorded and the balance not.
-  const { error: writeErr } = await db
-    .from('users')
-    .update({ points, total_upvotes_received: totalUpvotes, badges })
-    .eq('id', userId);
-
-  if (writeErr) throw writeErr;
-  return { points, totalUpvotes, badges };
+  if (error.code === 'PGRST202') throw missingFunctionError('apply_vote_points', error);
+  throw error;
 }
 
 module.exports = { applyVotePoints };

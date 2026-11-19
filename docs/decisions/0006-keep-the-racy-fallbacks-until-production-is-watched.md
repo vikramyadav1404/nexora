@@ -1,7 +1,7 @@
 # 0006 — Keep the racy fallbacks for now, on purpose
 
 Date: 2026-08-27
-Status: accepted (deferral, to revisit ~2026-09-10)
+Status: closed 2026-11-19 — fallbacks removed (see "Closed" at the end)
 
 ## Decision
 
@@ -57,3 +57,46 @@ loose end someone forgot.
 
 See [`0004`](0004-a-fake-may-not-be-the-only-thing-that-runs-the-logic.md),
 [`../retrospective-2026-08.md`](../retrospective-2026-08.md).
+
+## Closed — 2026-11-19
+
+The review date (~2026-09-10) passed without this file being revisited, which
+is the loose end it was written to prevent. Closed now, on this evidence:
+
+- **The running production deployment passes the boot check.**
+  `GET /api/ready` on the production API returned `{"ready":true}` on
+  2026-11-19. In production a missing or broken race-guard function makes
+  every `/api` route answer 503, `/api/ready` included, so a ready answer
+  means all three functions were present and ran when that instance booted.
+- **About twelve weeks** have passed since the boot check shipped, against the
+  two weeks this decision asked for.
+- **Not checked:** Vercel's logs were not reviewed for a boot refusal in
+  between, and the maintainer has no record of one. That is weaker than "watched
+  and clean", and it is written down here rather than rounded up.
+
+What changed:
+
+- `legacyApply` (`votePoints.js`), `legacyClaim` (`quota.js`) and
+  `legacyTransfer` (`rewards.js`) are deleted.
+- PGRST202 now throws `missingFunctionError` (`utils/raceFunctions.js`). The
+  client gets a 503 naming the migration to run, the error goes to error
+  reporting as a 5xx, and **nothing is written**: the quota claim and the
+  transfer fail before any update, and the vote-points call moves no points.
+  Tests in `securityHardening.test.mjs` and `security.test.mjs` assert all
+  three, and each goes red with the old fallback restored.
+
+The trade this accepts is the one described above: if a function were dropped
+on an already-booted instance, those three actions would fail until the
+migration is re-applied, instead of quietly running the racy path. A loud,
+recoverable outage of three actions is preferred to silent lost updates.
+
+One residual, unchanged by this and recorded so it is not mistaken for new:
+the answer-vote route writes the vote row *before* calling
+`applyVotePoints`. Any error at that call — a timeout before today, and now
+also a missing function — leaves the vote recorded without its points. The
+fix for that is one SQL function that writes the vote and the points in the
+same transaction, not a racy fallback.
+
+Migrations 005, 015 and 016 still describe the fallback in their comments.
+They are left as written: applied migrations are a record, not documentation
+to keep current.

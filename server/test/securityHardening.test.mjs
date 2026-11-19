@@ -258,12 +258,34 @@ describe('3. daily quotas cannot be raced', () => {
     expect(post.allowed).toBe(true);
   });
 
-  it('falls back rather than 500ing when migration 015 is absent', async () => {
-    // Simulate an unapplied migration: PostgREST answers PGRST202.
+  it('REGRESSION: a missing claim_daily_quota fails loudly and writes nothing (decision 0006)', async () => {
+    /*
+     * Simulate an unapplied migration: PostgREST answers PGRST202. This used
+     * to fall back to the read-then-write that the five-parallel test above
+     * shows is farmable. The fallback is retired, so the claim must refuse —
+     * naming the migration — and the counter must not move.
+     */
     delete db._rpc.claim_daily_quota;
-    const userRow = db._tables.users[0];
-    const r = await claimDailyQuota(db, { userId: ME, kind: 'question', limit: 1, userRow });
-    expect(r.allowed).toBe(true);
+    const before = { ...db._tables.users[0] };
+
+    await expect(
+      claimDailyQuota(db, { userId: ME, kind: 'question', limit: 1, userRow: db._tables.users[0] })
+    ).rejects.toMatchObject({ code: 'PGRST202', message: expect.stringMatching(/015_quota\.sql/) });
+
+    expect(db._tables.users[0].questions_today).toBe(before.questions_today);
+    expect(db._tables.users[0].last_question_date).toBe(before.last_question_date);
+  });
+
+  it('REGRESSION: a missing apply_vote_points fails loudly and moves no points (decision 0006)', async () => {
+    const { applyVotePoints } = require('../utils/votePoints.js');
+    delete db._rpc.apply_vote_points;
+    const before = { ...db._tables.users[0] };
+
+    await expect(applyVotePoints(db, ME, 5, 1))
+      .rejects.toMatchObject({ code: 'PGRST202', message: expect.stringMatching(/016_vote_points\.sql/) });
+
+    expect(db._tables.users[0].points).toBe(before.points);
+    expect(db._tables.users[0].total_upvotes_received).toBe(before.total_upvotes_received);
   });
 
   it('REGRESSION: a database error is not swallowed into a free pass', async () => {

@@ -134,6 +134,21 @@ describe('POST /api/rewards/transfer', () => {
     expect(sender.points + peer.points).toBe(USER.points + PEER.points);
   });
 
+  it('REGRESSION: a missing transfer_points refuses with 503 and moves nothing (decision 0006)', async () => {
+    // Unapplied migration 005. This used to fall back to two unlocked writes
+    // and an insert — the double-spend above. Now nothing may be written.
+    delete db._rpc.transfer_points;
+    const transfersBefore = (db._tables.point_transfers || []).length;
+
+    const res = await send({ toUserId: PEER.id, points: 50 });
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/005_hardening\.sql/);
+    expect(db._tables.users.find(u => u.id === USER.id).points).toBe(USER.points);
+    expect(db._tables.users.find(u => u.id === PEER.id).points).toBe(PEER.points);
+    expect((db._tables.point_transfers || []).length).toBe(transfersBefore);
+  });
+
   it('refuses a transfer to yourself', async () => {
     const res = await send({ toUserId: USER.id, points: 20 });
     expect(res.status).toBe(400);
