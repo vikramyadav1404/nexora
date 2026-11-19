@@ -13,7 +13,7 @@ flowchart LR
     B["Browser<br/>React 19 SPA"]
     S["Vercel Static<br/>Vite build"]
     A["Express API<br/>Vercel serverless, single handler"]
-    PG[("Supabase Postgres<br/>22 tables")]
+    PG[("Supabase Postgres")]
     ST["Supabase Storage<br/>private buckets"]
     CR["Vercel Cron"]
     RZ["Razorpay"]
@@ -44,11 +44,11 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 | Styling | Hand-written CSS, custom properties, `data-theme` light/dark |
 | Backend | Node, Express 4, helmet, express-rate-limit |
 | Data access | `@supabase/supabase-js` against PostgREST. **No ORM** |
-| Schema | Raw SQL, 20 numbered migrations |
+| Schema | Raw SQL, numbered migrations, recorded in a ledger table |
 | Auth | `jsonwebtoken`, `bcryptjs`, TOTP against `node:crypto` |
-| Tests | Vitest + Supertest. 500 server (32 files), 63 client (4 files) |
+| Tests | Vitest + Supertest (server), Vitest + Testing Library (client), Playwright end-to-end, SQL contract tests against a real Postgres in CI |
 
-97 REST endpoints across 20 route modules, plus health, readiness and version probes, and a 59-endpoint in-memory mirror for demo mode. 22 pages.
+A REST API split into route modules, plus health, readiness and version probes. The API runs only against Supabase: there is no in-memory demo backend.
 
 ---
 
@@ -59,20 +59,21 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 | Feed, posts, comments, likes, bookmarks | Implemented |
 | Q&A: questions, answers, voting, accepted answers | Implemented |
 | Network-size posting quota | Implemented — Postgres row lock |
-| Points, badges, transfers | Implemented — transfer is a DB transaction, not app logic |
+| Points, badges, transfers | Implemented — transfer is a DB transaction, not app logic; votes and answer awards move points in the same transaction as their row |
 | Two-factor auth (TOTP + backup codes) | Implemented — hand-rolled, all six RFC 6238 vectors tested |
 | Email verification | Implemented, and now enforced on three actions |
-| Subscriptions and checkout | Implemented, **but nothing recurs** — payments add days |
-| Search, ranked in SQL | Implemented — **capped at 50 results, cannot page past it** |
+| Subscriptions and checkout | Implemented — plans with a Razorpay plan id renew monthly on Razorpay Subscriptions (grace period on a failed renewal, access ends when retries run out, cancelling keeps the paid period); billing webhooks are applied exactly once and in order. Other plans use a one-time 30-day checkout |
+| Search, ranked in SQL | Implemented — keyset-paged on `(rank, created_at, id)`; a query that is only a typo still matches, via word similarity |
 | Media upload and serving | Implemented — direct-to-storage PUT, authorising redirect on read |
 | AI assists | Implemented, optional — no-ops without `ANTHROPIC_API_KEY` |
 | Weekly digest email | Implemented, optional — no-ops without SMTP |
 | Realtime notifications | Implemented via Supabase Realtime |
 | Migration ledger | Implemented — migration `019` records every applied file; production refuses to boot if a race-guard function is missing |
 | Video transcoding | **Not built.** Video is stored and served untouched |
-| `audit_logs` | **Not built.** Defined in `004_production.sql`, never applied. Nothing writes to it |
+| `audit_logs` | Implemented — written by database triggers, so no code path can skip it; append-only; admin actions attributed to the admin |
 | Cron dry-run and circuit breaker | Implemented — the manual sweep is dry by default, and any run that would delete more than 25% of what it scanned is refused |
-| Frontend tests | Every route is mount-tested against fixtures, plus unit tests for media-401 recovery, environment detection and error-boundary triage. **No interaction-level coverage** |
+| Frontend tests | Every route is mount-tested against fixtures, plus unit tests. Playwright drives login, the refresh-token cycle, logout and posting (including the direct-to-storage upload) in a real browser |
+| Backups | Implemented — nightly in GitHub Actions, encrypted (AES-256-GCM) before upload |
 
 ---
 
@@ -103,19 +104,15 @@ The two that changed how the project works are written up in [docs/decisions/](d
 ## What's still open
 
 - **No integration test covers the URL the API actually returns.** Found the hard way. Avatars 401'd in production for four rounds of investigation while every check passed, because `publicAssetUrl` prepended an absolute host — derived from `VERCEL_URL`, so a different one per deploy — to the relative `/api/media/` paths migration 017 had just created. Cross-origin means the host-scoped cookie is not sent, and an `<img>` cannot send an `Authorization` header instead. Every check read the *database* value and requested it directly: the database, the route and the cookie were each correct, and the seam between them was not. Fixed, with tests asserting on serialiser output under the environment conditions production actually has. The lesson generalises past this bug — probing components individually cannot find a fault that lives between them, and a green suite against a failing browser means the suite is blind, not that the browser is odd.
-- **Search cannot page past 50.** Rank is not monotonic with time, so the keyset the feed uses does not apply.
-- **A query that is only a typo finds nothing** — trigram similarity reorders full-text matches but cannot surface one alone.
 - **`storage_key` is empty** for rows written before migration 011 and by the multipart path; those objects can never be swept.
-- **`audit_logs` does not exist** and nothing writes to it.
 - **Video is stored, never transcoded.**
-- **Demo mode is a second implementation** of 59 endpoints and will drift.
+- **Staging is paused.** The `nexora-staging` Supabase project pauses after a week idle on the free tier, so it is not yet a step before production.
+- **In a non-production build the environment banner covers the top navbar**, so its links cannot be clicked. Production does not render the banner.
 
 ## What I would do next
 
 1. **Make staging the default path to production.** The runbook is in [docs/staging.md](docs/staging.md). The bucket flip and media proxy were verified against production because there was nowhere else; every incident in the first month was found by audit or in production — none before deploy.
-2. **Interaction-level coverage for the client.** Every route has a mount smoke test, and media recovery, environment detection and the error boundary have unit tests. What is still uncovered is the session, the refresh cycle, and anything that only breaks after an interaction.
-3. **Delete demo mode or generate it.** Two hand-maintained implementations of 59 endpoints will diverge; the only question is when.
-4. **Decide on recurring billing.** Subscriptions that silently do not renew are a product decision being made by omission.
+2. **Fix the banner overlapping the navbar** in non-production builds, then extend the end-to-end suite past the session and posting.
 
 ---
 
@@ -127,11 +124,13 @@ cp server/.env.example server/.env   # Supabase URL + keys, JWT_SECRET (32+ char
 npm run dev                          # server :5000, client :5173
 ```
 
-No database? Set `DEMO_MODE=true` in `server/.env` — the in-memory mirror serves a working app with seeded data. Otherwise apply `server/db/migrations/*.sql` in numeric order.
+The API needs a Supabase project (the free tier is enough); without its keys it refuses to start. Apply the migrations in order: `cd server && npm run migration:runner -- --fresh`, then paste the generated file into the Supabase SQL Editor.
 
 ```bash
-cd server && npm test                # 500 tests, no database required
-cd client && npm test                # 63 tests, incl. a mount smoke test for every route
+cd server && npm test                # no database required
+cd client && npm test                # incl. a mount smoke test for every route
+cd client && npm run test:e2e        # Playwright: builds, serves, drives a browser
+cd server && CONTRACT_DB_URL=postgres://… npm run test:contract   # SQL against a throwaway Postgres
 cd server && npm run check:buckets   # fails if any bucket is publicly readable
 cd client && npm run check:env       # fails if a secret is exposed to the build
 ```
