@@ -192,7 +192,9 @@ function createFakeSupabase(seed = {}) {
     claim_daily_quota: { required: ['p_user_id', 'p_kind', 'p_limit'] },
     transfer_points: { required: ['p_from_user', 'p_to_user', 'p_points'], optional: ['p_message'] },
     rate_limit_hit: { required: ['p_key', 'p_window_ms'] },
-    rate_limit_reset: { required: ['p_key'] }
+    rate_limit_reset: { required: ['p_key'] },
+    admin_set_user_active: { required: ['p_actor', 'p_user', 'p_active'] },
+    admin_update_report: { required: ['p_actor', 'p_report', 'p_status'], optional: ['p_note'] }
   };
 
   function assertRpcSignature(name, args = {}) {
@@ -307,6 +309,48 @@ function createFakeSupabase(seed = {}) {
         error: null
       };
     },
+    /*
+     * Mirror migration 023's admin functions. The audit row the real trigger
+     * writes is mirrored too, with the actor the function sets, so a route
+     * test can see attribution; the trigger itself is covered by the contract
+     * suite against Postgres.
+     */
+    admin_set_user_active({ p_actor, p_user, p_active }) {
+      const actor = tables.users.find(u => u.id === p_actor);
+      if (!actor || actor.role !== 'admin') return { data: null, error: { code: '42501', message: 'admin required' } };
+      const user = tables.users.find(u => u.id === p_user);
+      if (!user) return { data: null, error: { code: 'P0002', message: 'user not found' } };
+      if (user.is_active !== p_active) {
+        (tables.audit_logs ||= []).push({
+          actor_id: p_actor, subject_id: p_user,
+          action: p_active ? 'account.reactivated' : 'account.deactivated', meta: {}
+        });
+      }
+      user.is_active = p_active;
+      return { data: null, error: null };
+    },
+    admin_update_report({ p_actor, p_report, p_status, p_note = null }) {
+      if (!['open', 'reviewing', 'resolved', 'dismissed'].includes(p_status)) {
+        return { data: null, error: { code: '23514', message: 'invalid status' } };
+      }
+      const actor = tables.users.find(u => u.id === p_actor);
+      if (!actor || actor.role !== 'admin') return { data: null, error: { code: '42501', message: 'admin required' } };
+      const report = (tables.reports || []).find(r => r.id === p_report);
+      if (!report) return { data: null, error: { code: 'P0002', message: 'report not found' } };
+      const before = { status: report.status, admin_note: report.admin_note };
+      report.status = p_status;
+      report.resolved_at = ['resolved', 'dismissed'].includes(p_status) ? new Date().toISOString() : null;
+      if (p_note !== null) report.admin_note = p_note;
+      if (before.status !== report.status || before.admin_note !== report.admin_note) {
+        (tables.audit_logs ||= []).push({
+          actor_id: p_actor, subject_id: report.reporter_id, action: 'report.updated',
+          meta: { report_id: report.id, from: before.status, to: report.status,
+                  note_changed: before.admin_note !== report.admin_note }
+        });
+      }
+      return { data: [{ ...report }], error: null };
+    },
+
     rate_limit_hit() {
       return { data: [{ hits: 1, expires_at: new Date(Date.now() + 60000).toISOString() }], error: null };
     },

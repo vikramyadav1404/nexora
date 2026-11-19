@@ -223,6 +223,190 @@ run('SQL race-guard functions (real Postgres)', () => {
 });
 
 /**
+ * Migration 023: audit_logs, written by triggers, append-only.
+ *
+ * The whole migration file is run, not extracted functions: the guard block,
+ * the table, the triggers and the BEGIN/COMMIT are all part of what ships.
+ */
+const AUDIT_SCHEMA = 'contract_audit';
+const AU_ADMIN = '00000000-0000-4000-8000-0000000000c1';
+const AU_USER = '00000000-0000-4000-8000-0000000000c2';
+const AU_OTHER = '00000000-0000-4000-8000-0000000000c3';
+const AU_REPORT = '00000000-0000-4000-8000-0000000000c4';
+
+const AUDIT_TABLES = `
+  CREATE TABLE users (
+    id UUID PRIMARY KEY, email TEXT, password TEXT, role TEXT DEFAULT 'user',
+    is_active BOOLEAN DEFAULT TRUE, subscription_plan TEXT DEFAULT 'free',
+    mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    points INT DEFAULT 0, total_answers INT DEFAULT 0, badges TEXT[] DEFAULT '{}'
+  );
+  CREATE TABLE point_transfers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    to_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    points INT NOT NULL, message TEXT DEFAULT '', created_at TIMESTAMPTZ DEFAULT now()
+  );
+  CREATE TABLE reports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL, target_id TEXT NOT NULL, reason TEXT NOT NULL,
+    details TEXT DEFAULT '', status TEXT DEFAULT 'open',
+    admin_note TEXT DEFAULT '', resolved_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now()
+  );
+`;
+
+run('audit_logs (migration 023, real Postgres)', () => {
+  let client;
+
+  beforeAll(async () => {
+    client = new pg.Client({ connectionString: DB_URL });
+    await client.connect();
+    await assertThrowawayTarget(client);
+    await client.query(`
+      DROP SCHEMA IF EXISTS ${AUDIT_SCHEMA} CASCADE;
+      CREATE SCHEMA ${AUDIT_SCHEMA};
+      SET search_path TO ${AUDIT_SCHEMA};
+      ${AUDIT_TABLES}
+    `);
+    await client.query(functionBlock(mig('005_hardening.sql'), 'compute_badges'));
+    await client.query(functionBlock(mig('005_hardening.sql'), 'transfer_points'));
+    // Twice: re-running must not stack triggers (one entry per change below).
+    await client.query(mig('023_audit_logs.sql'));
+    await client.query(mig('023_audit_logs.sql'));
+  });
+
+  afterAll(async () => {
+    if (client) {
+      await client.query(`DROP SCHEMA IF EXISTS ${AUDIT_SCHEMA} CASCADE;`).catch(() => {});
+      await client.query('DROP SCHEMA IF EXISTS contract_audit_guard CASCADE;').catch(() => {});
+      await client.end();
+    }
+  });
+
+  async function reset() {
+    // audit_logs refuses TRUNCATE by design; a fresh copy per test is simpler
+    // than disabling the trigger the tests are about.
+    await client.query(`
+      ALTER TABLE audit_logs DISABLE TRIGGER audit_logs_no_truncate;
+      TRUNCATE audit_logs;
+      ALTER TABLE audit_logs ENABLE TRIGGER audit_logs_no_truncate;
+      DELETE FROM point_transfers; DELETE FROM reports; DELETE FROM users;
+    `);
+    await client.query(
+      `INSERT INTO users (id, email, password, role, points) VALUES
+         ($1, 'admin@x.test', 'h1', 'admin', 100), ($2, 'u@x.test', 'h2', 'user', 100), ($3, 'o@x.test', 'h3', 'user', 100);`,
+      [AU_ADMIN, AU_USER, AU_OTHER]
+    );
+    await client.query(
+      `INSERT INTO reports (id, reporter_id, target_type, target_id, reason, admin_note)
+       VALUES ($1, $2, 'post', 'p1', 'spam', 'first note');`,
+      [AU_REPORT, AU_OTHER]
+    );
+  }
+
+  const entries = async () =>
+    (await client.query('SELECT actor_id, subject_id, action, meta FROM audit_logs ORDER BY created_at, action')).rows;
+
+  it('a points transfer is recorded with the sender as actor', async () => {
+    await reset();
+    await client.query('SELECT * FROM transfer_points($1, $2, 20, $3)', [AU_USER, AU_OTHER, 'gift']);
+    const [e] = await entries();
+    expect(e).toMatchObject({ actor_id: AU_USER, subject_id: AU_OTHER, action: 'points.transfer' });
+    expect(e.meta.points).toBe(20);
+  });
+
+  it('security-relevant user changes are recorded; a points change is not', async () => {
+    await reset();
+    await client.query('UPDATE users SET points = points + 5 WHERE id = $1', [AU_USER]);
+    expect(await entries()).toHaveLength(0);
+
+    await client.query(
+      `UPDATE users SET mfa_enabled = TRUE, password = 'h2-new', role = 'moderator' WHERE id = $1`, [AU_USER]
+    );
+    const got = await entries();
+    expect(got.map((e) => e.action).sort()).toEqual(['mfa.enabled', 'password.changed', 'role.changed']);
+    expect(got.find((e) => e.action === 'role.changed').meta).toEqual({ from: 'user', to: 'moderator' });
+    // The hash is never copied into the log.
+    expect(JSON.stringify(got)).not.toMatch(/h2-new|h2\b/);
+    // Not attributed: a plain update has no declared actor.
+    expect(got.every((e) => e.actor_id === null && e.subject_id === AU_USER)).toBe(true);
+  });
+
+  it('an admin ban is attributed to the admin, and the actor does not leak', async () => {
+    await reset();
+    await client.query('SELECT admin_set_user_active($1, $2, false)', [AU_ADMIN, AU_USER]);
+    // A later, separate transaction on the same connection: no actor carried over.
+    await client.query(`UPDATE users SET role = 'moderator' WHERE id = $1`, [AU_OTHER]);
+
+    const got = await entries();
+    expect(got.find((e) => e.action === 'account.deactivated'))
+      .toMatchObject({ actor_id: AU_ADMIN, subject_id: AU_USER });
+    expect(got.find((e) => e.action === 'role.changed').actor_id).toBeNull();
+  });
+
+  it('a non-admin cannot use the admin functions, and nothing changes or is logged', async () => {
+    await reset();
+    await expect(client.query('SELECT admin_set_user_active($1, $2, false)', [AU_USER, AU_OTHER]))
+      .rejects.toThrow(/admin required/);
+    await expect(client.query(`SELECT * FROM admin_update_report($1, $2, 'resolved')`, [AU_USER, AU_REPORT]))
+      .rejects.toThrow(/admin required/);
+    const { rows } = await client.query('SELECT is_active FROM users WHERE id = $1', [AU_OTHER]);
+    expect(rows[0].is_active).toBe(true);
+    expect(await entries()).toHaveLength(0);
+  });
+
+  it('a report update keeps the note when none is sent, and is attributed', async () => {
+    await reset();
+    const { rows } = await client.query(`SELECT * FROM admin_update_report($1, $2, 'reviewing')`, [AU_ADMIN, AU_REPORT]);
+    expect(rows[0].admin_note).toBe('first note');
+    expect(rows[0].resolved_at).toBeNull();
+
+    const [e] = await entries();
+    expect(e).toMatchObject({ actor_id: AU_ADMIN, subject_id: AU_OTHER, action: 'report.updated' });
+    expect(e.meta).toMatchObject({ from: 'open', to: 'reviewing', note_changed: false });
+  });
+
+  it('REGRESSION: the log refuses UPDATE, DELETE and TRUNCATE', async () => {
+    await reset();
+    await client.query(`UPDATE users SET password = 'x' WHERE id = $1`, [AU_USER]);
+    await expect(client.query(`UPDATE audit_logs SET action = 'nothing.happened'`)).rejects.toThrow(/append-only/);
+    await expect(client.query('DELETE FROM audit_logs')).rejects.toThrow(/append-only/);
+    await expect(client.query('TRUNCATE audit_logs')).rejects.toThrow(/append-only/);
+    expect(await entries()).toHaveLength(1);
+  });
+
+  it('deleting a user still works, and the record of them stays', async () => {
+    await reset();
+    await client.query(`UPDATE users SET password = 'x' WHERE id = $1`, [AU_USER]);
+    await client.query('DELETE FROM users WHERE id = $1', [AU_USER]);
+    const got = await entries();
+    expect(got).toHaveLength(1);
+    expect(got[0].subject_id).toBe(AU_USER);
+  });
+
+  it('REGRESSION: on a schema missing a column the triggers read, the migration aborts and installs nothing', async () => {
+    await client.query(`
+      DROP SCHEMA IF EXISTS contract_audit_guard CASCADE;
+      CREATE SCHEMA contract_audit_guard;
+      SET search_path TO contract_audit_guard;
+      ${AUDIT_TABLES.replace('mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,', '')}
+    `);
+    try {
+      await expect(client.query(mig('023_audit_logs.sql'))).rejects.toThrow(/users\.mfa_enabled/);
+      await client.query('ROLLBACK').catch(() => {});
+      const { rows } = await client.query(`SELECT to_regclass('contract_audit_guard.audit_logs') AS t`);
+      expect(rows[0].t).toBeNull();
+      // And users is still updatable: no half-installed trigger.
+      await client.query(`INSERT INTO users (id, email) VALUES ($1, 'g@x.test')`, [AU_USER]);
+      await client.query(`UPDATE users SET role = 'admin' WHERE id = $1`, [AU_USER]);
+    } finally {
+      await client.query(`SET search_path TO ${AUDIT_SCHEMA}`);
+    }
+  });
+});
+
+/**
  * feed_for_user (migration 020), against real Postgres.
  *
  * The route's feed tests never run this function: the fake has no

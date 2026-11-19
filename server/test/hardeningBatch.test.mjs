@@ -183,7 +183,7 @@ describe('the moderation queue keeps its notes', () => {
   it('REGRESSION: a status-only update does not erase admin_note', async () => {
     db._tables.users[0].role = 'admin';
     db._tables.reports.push({
-      id: 'r1', reporter_id: OTHER, status: 'resolved',
+      id: '00000000-0000-4000-8000-0000000000f1', reporter_id: OTHER, status: 'resolved',
       admin_note: 'Confirmed spam, account warned.', resolved_at: new Date().toISOString()
     });
 
@@ -191,7 +191,7 @@ describe('the moderation queue keeps its notes', () => {
     a.use(express.json());
     a.use('/api/admin', require('../routes/admin.js'));
 
-    await request(a).patch('/api/admin/reports/r1')
+    await request(a).patch('/api/admin/reports/00000000-0000-4000-8000-0000000000f1')
       .set('Authorization', `Bearer ${token()}`)
       .send({ status: 'reviewing' });
 
@@ -203,13 +203,13 @@ describe('the moderation queue keeps its notes', () => {
 
   it('a note that is sent still replaces the old one', async () => {
     db._tables.users[0].role = 'admin';
-    db._tables.reports.push({ id: 'r2', reporter_id: OTHER, status: 'open', admin_note: 'old' });
+    db._tables.reports.push({ id: '00000000-0000-4000-8000-0000000000f2', reporter_id: OTHER, status: 'open', admin_note: 'old' });
 
     const a = express();
     a.use(express.json());
     a.use('/api/admin', require('../routes/admin.js'));
 
-    await request(a).patch('/api/admin/reports/r2')
+    await request(a).patch('/api/admin/reports/00000000-0000-4000-8000-0000000000f2')
       .set('Authorization', `Bearer ${token()}`)
       .send({ status: 'resolved', note: 'new note' });
 
