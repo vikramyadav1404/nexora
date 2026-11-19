@@ -400,6 +400,191 @@ run('feed_for_user keyset pagination (real Postgres)', () => {
 });
 
 /**
+ * Migration 021: answer votes, answer creation and answer deletion move points
+ * in the same transaction as their row, under row locks.
+ *
+ * Concurrency here is real: a pool of separate connections, so two calls can
+ * genuinely overlap and the locks are what serialise them. The fake can only
+ * show the arithmetic; this shows the transaction.
+ */
+const ANS_SCHEMA = 'contract_answers';
+const A_AUTHOR = '00000000-0000-4000-8000-0000000000a1';
+const A_ASKER = '00000000-0000-4000-8000-0000000000a2';
+const A_Q = '00000000-0000-4000-8000-0000000000a3';
+const A_ANS = '00000000-0000-4000-8000-0000000000a4';
+const A_ANS2 = '00000000-0000-4000-8000-0000000000a5';
+const voterId = (n) => `00000000-0000-4000-8000-0000000001${String(n).padStart(2, '0')}`;
+
+run('answer points move with their row (migration 021, real Postgres)', () => {
+  let admin;
+  let pool;
+
+  beforeAll(async () => {
+    admin = new pg.Client({ connectionString: DB_URL });
+    await admin.connect();
+    await assertThrowawayTarget(admin);
+
+    await admin.query(`
+      DROP SCHEMA IF EXISTS ${ANS_SCHEMA} CASCADE;
+      CREATE SCHEMA ${ANS_SCHEMA};
+      SET search_path TO ${ANS_SCHEMA};
+      CREATE TABLE users (
+        id UUID PRIMARY KEY, points INT DEFAULT 0, total_upvotes_received INT DEFAULT 0,
+        total_answers INT DEFAULT 0, badges TEXT[] DEFAULT '{}'
+      );
+      CREATE TABLE questions (
+        id UUID PRIMARY KEY, author_id UUID, accepted_answer_id UUID, is_resolved BOOLEAN DEFAULT FALSE
+      );
+      CREATE TABLE answers (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        question_id UUID REFERENCES questions(id) ON DELETE CASCADE,
+        author_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        body TEXT NOT NULL, is_accepted BOOLEAN DEFAULT FALSE,
+        points_awarded BOOLEAN DEFAULT FALSE, bonus_points_awarded BOOLEAN DEFAULT FALSE
+      );
+      CREATE TABLE answer_votes (
+        answer_id UUID NOT NULL REFERENCES answers(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        vote_type TEXT NOT NULL CHECK (vote_type IN ('up','down')),
+        points_applied BOOLEAN NOT NULL DEFAULT TRUE,
+        PRIMARY KEY (answer_id, user_id)
+      );
+    `);
+    // The shipped definitions, in dependency order.
+    await admin.query(functionBlock(mig('005_hardening.sql'), 'compute_badges'));
+    await admin.query(functionBlock(mig('016_vote_points.sql'), 'apply_vote_points'));
+    for (const fn of ['cast_answer_vote', 'create_answer', 'delete_answer']) {
+      await admin.query(functionBlock(mig('021_answer_points_atomic.sql'), fn));
+    }
+
+    pool = new pg.Pool({ connectionString: DB_URL, max: 8, options: `-c search_path=${ANS_SCHEMA}` });
+  });
+
+  afterAll(async () => {
+    if (pool) await pool.end();
+    if (admin) {
+      await admin.query(`DROP SCHEMA IF EXISTS ${ANS_SCHEMA} CASCADE;`).catch(() => {});
+      await admin.end();
+    }
+  });
+
+  async function reset({ points = 10 } = {}) {
+    await admin.query('TRUNCATE answer_votes, answers, questions, users CASCADE;');
+    const voters = Array.from({ length: 6 }, (_, i) => `('${voterId(i)}', 50)`).join(',');
+    await admin.query(`INSERT INTO users (id, points) VALUES ('${A_AUTHOR}', ${points}), ('${A_ASKER}', 50), ${voters};`);
+    await admin.query(`UPDATE users SET total_answers = 3 WHERE id = '${A_AUTHOR}';`);
+    await admin.query(`INSERT INTO questions (id, author_id) VALUES ('${A_Q}', '${A_ASKER}');`);
+    await admin.query(
+      `INSERT INTO answers (id, question_id, author_id, body, points_awarded)
+       VALUES ('${A_ANS}', '${A_Q}', '${A_AUTHOR}', 'one', TRUE), ('${A_ANS2}', '${A_Q}', '${A_AUTHOR}', 'two', TRUE);`
+    );
+  }
+
+  const authorRow = async () =>
+    (await admin.query('SELECT points, total_upvotes_received, total_answers FROM users WHERE id = $1', [A_AUTHOR])).rows[0];
+  const vote = (voter, type, answer = A_ANS) =>
+    pool.query('SELECT * FROM cast_answer_vote($1, $2, $3)', [answer, voter, type]);
+
+  it('six voters at once: every upvote counts and the bonus is paid exactly once', async () => {
+    await reset({ points: 10 });
+
+    await Promise.all(Array.from({ length: 6 }, (_, i) => vote(voterId(i), 'up')));
+
+    const a = await authorRow();
+    expect(a.total_upvotes_received).toBe(6);
+    expect(a.points).toBe(15);  // 10 + one 5-upvote bonus, not two
+    const { rows } = await admin.query('SELECT bonus_points_awarded FROM answers WHERE id = $1', [A_ANS]);
+    expect(rows[0].bonus_points_awarded).toBe(true);
+  });
+
+  it('a double-click (same voter, same vote, at once) serialises instead of erroring', async () => {
+    await reset();
+
+    const results = await Promise.allSettled([vote(voterId(0), 'up'), vote(voterId(0), 'up')]);
+
+    // Both succeed: the second sees the first's row and toggles it off.
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    const n = await admin.query('SELECT count(*)::int AS n FROM answer_votes WHERE user_id = $1', [voterId(0)]);
+    expect(n.rows[0].n).toBe(0);
+    expect((await authorRow()).total_upvotes_received).toBe(0);
+  });
+
+  it('REGRESSION: posting an answer and a downvote at once keep both changes', async () => {
+    await reset({ points: 10 });
+
+    await Promise.all([
+      pool.query('SELECT * FROM create_answer($1, $2, $3)', [A_Q, A_AUTHOR, 'three']),
+      vote(voterId(1), 'down', A_ANS2)
+    ]);
+
+    const a = await authorRow();
+    expect(a.points).toBe(14);         // 10 + 5 - 1
+    expect(a.total_answers).toBe(4);
+  });
+
+  it('REGRESSION: the vote row and the points commit together or not at all', async () => {
+    /*
+     * The residual decision 0006 recorded: the route wrote the vote, then moved
+     * points in a separate call. Make the points step fail and the vote must
+     * not survive it.
+     */
+    await reset();
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      await c.query(`
+        CREATE OR REPLACE FUNCTION apply_vote_points(p_user_id UUID, p_points_delta INT, p_upvotes_delta INT)
+        RETURNS TABLE (points INT, total_upvotes_received INT, badges TEXT[])
+        LANGUAGE plpgsql AS $fail$ BEGIN RAISE EXCEPTION 'simulated failure'; END; $fail$;
+      `);
+      await c.query('SAVEPOINT before_vote');
+      await expect(c.query('SELECT * FROM cast_answer_vote($1, $2, $3)', [A_ANS, voterId(2), 'up']))
+        .rejects.toThrow(/simulated failure/);
+      await c.query('ROLLBACK TO SAVEPOINT before_vote');
+      const { rows } = await c.query('SELECT count(*)::int AS n FROM answer_votes');
+      expect(rows[0].n).toBe(0);
+    } finally {
+      await c.query('ROLLBACK');  // also restores the real apply_vote_points
+      c.release();
+    }
+  });
+
+  it('a downvote at zero records points_applied=false, and undoing it credits nothing', async () => {
+    await reset({ points: 0 });
+
+    await vote(voterId(3), 'down');
+    const row = await admin.query('SELECT points_applied FROM answer_votes WHERE user_id = $1', [voterId(3)]);
+    expect(row.rows[0].points_applied).toBe(false);
+
+    await vote(voterId(3), 'down');  // undo
+    expect((await authorRow()).points).toBe(0);
+  });
+
+  it('refuses a vote on your own answer and an unknown type', async () => {
+    await reset();
+    await expect(vote(A_AUTHOR, 'up')).rejects.toThrow(/own answer/);
+    await expect(vote(voterId(0), 'sideways')).rejects.toThrow(/up or down/);
+  });
+
+  it('delete_answer takes back the award and bonus, clears accepted, and cascades votes', async () => {
+    await reset({ points: 30 });
+    await admin.query(`UPDATE answers SET bonus_points_awarded = TRUE WHERE id = '${A_ANS}';`);
+    await admin.query(`UPDATE questions SET accepted_answer_id = '${A_ANS}', is_resolved = TRUE;`);
+    await vote(voterId(4), 'up');
+
+    await expect(pool.query('SELECT * FROM delete_answer($1, $2)', [A_ANS, A_ASKER]))
+      .rejects.toThrow(/not authorized/);
+
+    const { rows } = await pool.query('SELECT * FROM delete_answer($1, $2)', [A_ANS, A_AUTHOR]);
+    expect(rows[0].author_points).toBe(20);  // 30 - 5 - 5
+    const q = await admin.query('SELECT accepted_answer_id, is_resolved FROM questions');
+    expect(q.rows[0]).toEqual({ accepted_answer_id: null, is_resolved: false });
+    const v = await admin.query('SELECT count(*)::int AS n FROM answer_votes WHERE answer_id = $1', [A_ANS]);
+    expect(v.rows[0].n).toBe(0);
+  });
+});
+
+/**
  * The throwaway-target guard runs offline (no real DB needed) with a stub
  * client, because its whole job is to keep the destructive setup above from
  * touching the wrong database — and that has to be verified everywhere the

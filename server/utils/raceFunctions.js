@@ -45,7 +45,10 @@ function classify(error, healthyPattern) {
 const MIGRATION_FOR = {
   apply_vote_points: '016_vote_points.sql',
   claim_daily_quota: '015_quota.sql',
-  transfer_points: '005_hardening.sql'
+  transfer_points: '005_hardening.sql',
+  cast_answer_vote: '021_answer_points_atomic.sql',
+  create_answer: '021_answer_points_atomic.sql',
+  delete_answer: '021_answer_points_atomic.sql'
 };
 
 /**

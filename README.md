@@ -46,7 +46,7 @@ No Redis, no job queue, no worker. Scheduled work is authenticated HTTP endpoint
 | Data access | `@supabase/supabase-js` against PostgREST. **No ORM** |
 | Schema | Raw SQL, 20 numbered migrations |
 | Auth | `jsonwebtoken`, `bcryptjs`, TOTP against `node:crypto` |
-| Tests | Vitest + Supertest. 500 server (32 files), 63 client (4 files) |
+| Tests | Vitest + Supertest. 505 server (32 files), 63 client (4 files) |
 
 97 REST endpoints across 20 route modules, plus health, readiness and version probes, and a 59-endpoint in-memory mirror for demo mode. 22 pages.
 
@@ -130,7 +130,7 @@ npm run dev                          # server :5000, client :5173
 No database? Set `DEMO_MODE=true` in `server/.env` — the in-memory mirror serves a working app with seeded data. Otherwise apply `server/db/migrations/*.sql` in numeric order.
 
 ```bash
-cd server && npm test                # 500 tests, no database required
+cd server && npm test                # 505 tests, no database required
 cd client && npm test                # 63 tests, incl. a mount smoke test for every route
 cd server && npm run check:buckets   # fails if any bucket is publicly readable
 cd client && npm run check:env       # fails if a secret is exposed to the build
