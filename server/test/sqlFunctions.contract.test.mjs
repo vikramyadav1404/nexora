@@ -8,8 +8,8 @@
  * blind spot; the only cure is to execute the real SQL somewhere.
  *
  * The functions that ship are the source of truth here: this loads the actual
- * migration files (005, 015, 016) into a scratch schema and calls the functions
- * exactly as the app does — same parameter names, same expectations.
+ * migration files (005, 015, 016, 020) into a scratch schema and calls the
+ * functions exactly as the app does — same parameter names, same expectations.
  *
  * ------------------------------------------------------------------
  * Running it
@@ -18,6 +18,11 @@
  * — a disposable local cluster, or CI's service container. With it unset the
  * whole suite skips, so the offline unit run is unaffected. It must never point
  * at staging or production: the test creates and drops tables.
+ *
+ * CI sets CONTRACT_DB_REQUIRED=1 as well. With that set and no URL, the file
+ * fails instead of skipping: until 2026-11 no CI job set CONTRACT_DB_URL, so
+ * this whole suite reported "skipped" on every run and had never once executed
+ * there. Decision 0003 — a suite CI does not invoke does not exist.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -26,6 +31,12 @@ import path from 'node:path';
 import pg from 'pg';
 
 const DB_URL = process.env.CONTRACT_DB_URL;
+if (!DB_URL && process.env.CONTRACT_DB_REQUIRED === '1') {
+  throw new Error(
+    'CONTRACT_DB_REQUIRED=1 but CONTRACT_DB_URL is unset: the SQL contract suite ' +
+    'would silently skip. Point CONTRACT_DB_URL at a throwaway Postgres.'
+  );
+}
 const run = DB_URL ? describe : describe.skip;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -208,6 +219,183 @@ run('SQL race-guard functions (real Postgres)', () => {
       await expect(client.query('SELECT * FROM transfer_points($1,$2,95,$3)', [U, V, '']))
         .rejects.toThrow(/insufficient points/i);
     });
+  });
+});
+
+/**
+ * feed_for_user (migration 020), against real Postgres.
+ *
+ * The route's feed tests never run this function: the fake has no
+ * feed_for_user, so they all exercise the plain-recency fallback. 006's version
+ * sorted by (day, score, created_at, id) but paged on (created_at, id) alone,
+ * which skipped every same-day post that sorted after a cursor yet was newer
+ * than it. Nothing could see that without executing the SQL.
+ *
+ * Runs in its own schema: the feed needs a `posts` table, and the throwaway
+ * guard above treats a public `posts` table as the sign of a real database.
+ */
+const FEED_SCHEMA = 'contract_feed';
+const VIEWER = '00000000-0000-4000-8000-0000000000f1';
+const FOLLOWED = '00000000-0000-4000-8000-0000000000f2';
+const STRANGER = '00000000-0000-4000-8000-0000000000f3';
+const postId = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+run('feed_for_user keyset pagination (real Postgres)', () => {
+  let client;
+
+  beforeAll(async () => {
+    client = new pg.Client({ connectionString: DB_URL });
+    await client.connect();
+    await assertThrowawayTarget(client);
+
+    await client.query(`
+      SET TIME ZONE 'UTC';
+      DROP SCHEMA IF EXISTS ${FEED_SCHEMA} CASCADE;
+      CREATE SCHEMA ${FEED_SCHEMA};
+      SET search_path TO ${FEED_SCHEMA};
+      CREATE TABLE users (id UUID PRIMARY KEY, interests TEXT[]);
+      CREATE TABLE follows (follower_id UUID, following_id UUID);
+      CREATE TABLE posts (
+        id UUID PRIMARY KEY, author_id UUID, content TEXT, shares INT DEFAULT 0,
+        is_public BOOLEAN DEFAULT TRUE, interest_tags TEXT[] DEFAULT '{}',
+        seed_key TEXT, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ
+      );
+    `);
+    await client.query(functionBlock(mig('020_feed_keyset.sql'), 'feed_for_user'));
+  });
+
+  afterAll(async () => {
+    if (client) {
+      await client.query(`DROP SCHEMA IF EXISTS ${FEED_SCHEMA} CASCADE;`).catch(() => {});
+      await client.end();
+    }
+  });
+
+  async function seed(posts) {
+    await client.query('TRUNCATE users, follows, posts;');
+    await client.query(
+      `INSERT INTO users VALUES ($1, '{technology}'), ($2, '{}'), ($3, '{}');`,
+      [VIEWER, FOLLOWED, STRANGER]
+    );
+    await client.query('INSERT INTO follows VALUES ($1, $2);', [VIEWER, FOLLOWED]);
+    for (const p of posts) {
+      await client.query(
+        `INSERT INTO posts (id, author_id, content, is_public, interest_tags, seed_key, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7);`,
+        [p.id, p.author, p.content || p.id, p.isPublic ?? true, p.tags || [], p.seed || null, p.at]
+      );
+    }
+  }
+
+  /** One page, called exactly as routes/posts.js calls it. */
+  async function page(cursor, limit, personalized = true) {
+    const { rows } = await client.query(
+      'SELECT * FROM feed_for_user($1, $2, $3, $4, $5)',
+      [VIEWER, cursor?.created_at ?? null, cursor?.id ?? null, limit, personalized]
+    );
+    return rows;
+  }
+
+  /** Walk the feed the way infinite scroll does: last row of a page is the next cursor. */
+  async function walk(limit, personalized = true, between = async () => {}) {
+    const seen = [];
+    let cursor = null;
+    for (let i = 0; i < 200; i++) {
+      const rows = await page(cursor, limit, personalized);
+      seen.push(...rows.map((r) => r.id));
+      if (rows.length < limit) return seen;
+      cursor = rows[rows.length - 1];
+      await between(cursor);
+    }
+    throw new Error('feed walk did not terminate');
+  }
+
+  /**
+   * Three days, mixing followed / interest-matched / seeded / plain posts so
+   * that inside each day the score order and the time order disagree.
+   */
+  function mixedDays() {
+    const posts = [];
+    let n = 1;
+    for (const day of ['2026-11-17', '2026-11-18', '2026-11-19']) {
+      for (let h = 0; h < 8; h++) {
+        const kind = h % 4;
+        posts.push({
+          id: postId(n++),
+          author: kind === 1 ? FOLLOWED : STRANGER,
+          tags: kind === 2 ? ['technology'] : [],
+          seed: kind === 3 ? 'seed' : null,
+          at: `${day}T${String(8 + h).padStart(2, '0')}:00:00Z`
+        });
+      }
+    }
+    posts.push({ id: postId(n++), author: STRANGER, isPublic: false, at: '2026-11-19T12:30:00Z' });
+    return posts;
+  }
+
+  it('REGRESSION: the A/B/C case — a newer, lower-scored post on the same day is not skipped', async () => {
+    await seed([
+      { id: postId(1), author: FOLLOWED, content: 'A', at: '2026-11-19T10:00:00Z' },
+      { id: postId(2), author: STRANGER, content: 'B', at: '2026-11-19T11:00:00Z' },
+      { id: postId(3), author: STRANGER, content: 'C', at: '2026-11-19T09:00:00Z' }
+    ]);
+
+    const seen = await walk(1);
+    expect(seen).toEqual([postId(1), postId(2), postId(3)]);
+  });
+
+  it('REGRESSION: paging at any size returns every public post exactly once, in unpaged order', async () => {
+    const posts = mixedDays();
+    await seed(posts);
+    const publicCount = posts.filter((p) => p.isPublic !== false).length;
+
+    const unpaged = (await page(null, 50)).map((r) => r.id);
+    expect(unpaged).toHaveLength(publicCount);
+
+    for (const size of [1, 2, 3, 5, 7]) {
+      const seen = await walk(size);
+      expect(seen, `page size ${size}`).toEqual(unpaged);
+    }
+  });
+
+  it('non-personalized paging is pure recency and still complete', async () => {
+    const posts = mixedDays();
+    await seed(posts);
+
+    const expected = posts
+      .filter((p) => p.isPublic !== false)
+      .sort((a, b) => (a.at < b.at ? 1 : -1))
+      .map((p) => p.id);
+
+    expect(await walk(4, false)).toEqual(expected);
+  });
+
+  it('a cursor post deleted between pages repeats rows rather than skipping any', async () => {
+    const posts = mixedDays();
+    await seed(posts);
+    const unpaged = (await page(null, 50)).map((r) => r.id);
+
+    let deleted = null;
+    const seen = await walk(3, true, async (cursor) => {
+      if (!deleted) {
+        deleted = cursor.id;
+        await client.query('DELETE FROM posts WHERE id = $1;', [cursor.id]);
+      }
+    });
+
+    // Every post that still exists was shown at least once: nothing skipped.
+    for (const id of unpaged) expect(seen, `missing ${id}`).toContain(id);
+  });
+
+  it('a private post cannot serve as a cursor', async () => {
+    const posts = mixedDays();
+    await seed(posts);
+    const hidden = posts.find((p) => p.isPublic === false);
+
+    // Treated as a cursor that is gone: the cursor's day and older, public only.
+    const rows = await page({ created_at: hidden.at, id: hidden.id }, 50);
+    expect(rows.map((r) => r.id)).not.toContain(hidden.id);
+    expect(rows.every((r) => r.is_public)).toBe(true);
   });
 });
 
