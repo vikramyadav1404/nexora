@@ -99,6 +99,8 @@ export default function Subscriptions() {
 
   // Null until /plans answers, so the buttons are not briefly enabled on load.
   const [paymentsAvailable, setPaymentsAvailable] = useState(null);
+  // Which plans renew automatically (a Razorpay plan is configured server-side).
+  const [recurring, setRecurring] = useState({});
 
   // A swallowed failure left transactions empty, so "No transactions yet"
   // was shown to people who had in fact paid -- the worst version of this bug,
@@ -112,7 +114,10 @@ export default function Subscriptions() {
 
   useEffect(() => {
     axios.get('/api/subscriptions/plans')
-      .then(res => setPaymentsAvailable(res.data?.paymentsAvailable !== false))
+      .then(res => {
+        setPaymentsAvailable(res.data?.paymentsAvailable !== false);
+        setRecurring(res.data?.recurring || {});
+      })
       // An older API has no such field. Assume available rather than hiding
       // working buttons on a deployment that never had this problem.
       .catch(() => setPaymentsAvailable(true));
@@ -129,6 +134,38 @@ export default function Subscriptions() {
     setLoading(true);
     setCheckoutBlocked(false);
     try {
+      /*
+       * Auto-renewing plan: Razorpay checkout runs on a subscription instead
+       * of an order, stores the mandate and charges each month. The server
+       * verifies the first payment; renewals arrive by webhook.
+       */
+      if (recurring[planId]) {
+        const { data } = await axios.post('/api/subscriptions/create-subscription', { plan: planId });
+        await loadRazorpayScript();
+        const rzp = new window.Razorpay({
+          key: data.keyId,
+          subscription_id: data.subscriptionId,
+          name: 'Nexora',
+          description: `${PLANS.find(p => p.id === planId)?.name} Plan - renews monthly`,
+          handler: async (response) => {
+            try {
+              await axios.post('/api/subscriptions/verify-subscription', {
+                razorpayPaymentId: response.razorpay_payment_id,
+                razorpaySubscriptionId: response.razorpay_subscription_id,
+                razorpaySignature: response.razorpay_signature
+              });
+              toast.success('Subscribed — your plan renews automatically');
+              refreshUser();
+              fetchHistory();
+            } catch { toast.error('Payment verification failed'); }
+          },
+          prefill: { name: user?.name, email: user?.email },
+          theme: { color: 'var(--nx-violet)' }
+        });
+        rzp.open();
+        return;
+      }
+
       const res = await axios.post('/api/subscriptions/create-order', { plan: planId });
       const { orderId, amount, keyId, transactionId, isMock } = res.data;
 
@@ -197,6 +234,8 @@ export default function Subscriptions() {
 
   const currentPlan = user?.subscription?.plan || 'free';
   const expiresAt = user?.subscription?.expiresAt;
+  // True while a recurring plan expects a future charge (migration 024).
+  const autoRenew = !!user?.subscription?.autoRenew;
 
   // Same arithmetic the server uses, so the confirmation and the result agree.
   const daysLeft = expiresAt
@@ -260,9 +299,12 @@ export default function Subscriptions() {
         {tab === 'plans' && (
           <>
             {/* Current plan info.
-                Nothing here recurs -- a payment buys 30 days and the plan ends
-                on its own. Saying so is the point: most people look for a
-                Cancel button to stop a charge that, here, is never coming. */}
+                Two kinds of plan, and the copy has to say which: a one-time
+                payment buys 30 days and simply ends; an auto-renewing plan
+                charges each month until auto-renew is turned off. Most people
+                looking for Cancel want to stop a charge -- for a one-time plan
+                there is none coming, and for a recurring one turning it off
+                keeps the days already paid for. */}
             {currentPlan !== 'free' && (
               <div className="alert alert-success" style={{ maxWidth: 500, margin: '0 auto 24px', flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
@@ -275,14 +317,16 @@ export default function Subscriptions() {
 
                 {!confirmCancel && (
                   <div style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-sub)' }}>
-                    This does not renew automatically. Your plan simply ends on that date.
+                    {autoRenew
+                      ? 'Renews automatically each month.'
+                      : 'This does not renew automatically. Your plan simply ends on that date.'}
                     {' '}
                     <button
                       type="button"
                       onClick={() => setConfirmCancel(true)}
                       style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: 'var(--text-sub)', textDecoration: 'underline', cursor: 'pointer' }}
                     >
-                      End it now
+                      {autoRenew ? 'Turn off auto-renew' : 'End it now'}
                     </button>
                   </div>
                 )}
@@ -292,7 +336,12 @@ export default function Subscriptions() {
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, justifyContent: 'center', textAlign: 'left' }}>
                       <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 2 }} />
                       <span>
-                        {daysLeft > 0 ? (
+                        {autoRenew ? (
+                          <>
+                            No further charges. You keep your plan until the end of the period you
+                            have already paid for.
+                          </>
+                        ) : daysLeft > 0 ? (
                           <>
                             You have <strong>{daysLeft} day{daysLeft === 1 ? '' : 's'}</strong> left that you
                             have already paid for. Ending now gives {daysLeft === 1 ? 'it' : 'them'} up and
@@ -309,7 +358,7 @@ export default function Subscriptions() {
                         Keep my plan
                       </button>
                       <button className="btn btn-danger btn-sm" onClick={handleCancel} disabled={cancelling}>
-                        {cancelling ? 'Cancelling…' : 'End it now'}
+                        {cancelling ? 'Cancelling…' : autoRenew ? 'Turn off auto-renew' : 'End it now'}
                       </button>
                     </div>
                   </div>

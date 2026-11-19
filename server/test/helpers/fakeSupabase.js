@@ -190,6 +190,10 @@ function createFakeSupabase(seed = {}) {
   const RPC_SIGNATURES = {
     apply_vote_points: { required: ['p_user_id', 'p_points_delta', 'p_upvotes_delta'] },
     claim_daily_quota: { required: ['p_user_id', 'p_kind', 'p_limit'] },
+    apply_subscription_event: {
+      required: ['p_event_id', 'p_event_type', 'p_event_at', 'p_subscription_id'],
+      optional: ['p_status', 'p_plan', 'p_current_end', 'p_payment_id', 'p_amount', 'p_grace_days']
+    },
     transfer_points: { required: ['p_from_user', 'p_to_user', 'p_points'], optional: ['p_message'] },
     rate_limit_hit: { required: ['p_key', 'p_window_ms'] },
     rate_limit_reset: { required: ['p_key'] }
@@ -248,6 +252,83 @@ function createFakeSupabase(seed = {}) {
       row.badges = badges;
 
       return { data: [{ points, total_upvotes_received: upvotes, badges }], error: null };
+    },
+
+    /**
+     * Mirrors migration 024's apply_subscription_event: once per event id,
+     * status only from a newer event, a period extended only by a new payment,
+     * the period end only forward. The real function does it in one
+     * transaction under a lock on the user; sqlFunctions.contract.test.mjs runs
+     * that against Postgres.
+     */
+    apply_subscription_event(a) {
+      const ok = ['created', 'authenticated', 'active', 'pending', 'halted', 'cancelled', 'completed', 'paused'];
+      if (a.p_status != null && !ok.includes(a.p_status)) {
+        return { data: null, error: { code: '23514', message: `unknown subscription status ${a.p_status}` } };
+      }
+      const events = (tables.billing_events ||= []);
+      if (events.some(e => e.event_id === a.p_event_id)) {
+        return { data: [{ outcome: 'duplicate', affected_user: null, new_plan: null, new_expires_at: null }], error: null };
+      }
+      const ev = { event_id: a.p_event_id, event_type: a.p_event_type, razorpay_subscription_id: a.p_subscription_id, outcome: 'received' };
+      events.push(ev);
+
+      const user = a.p_subscription_id
+        ? tables.users.find(u => u.razorpay_subscription_id === a.p_subscription_id)
+        : null;
+      if (!user) {
+        ev.outcome = 'unknown_subscription';
+        return { data: [{ outcome: 'unknown_subscription', affected_user: null, new_plan: null, new_expires_at: null }], error: null };
+      }
+
+      const ms = (v) => (v ? new Date(v).getTime() : null);
+      let newPayment = false;
+      if (a.p_payment_id) {
+        const txns = (tables.transactions ||= []);
+        if (!txns.some(t => t.user_id === user.id && t.razorpay_payment_id === a.p_payment_id)) {
+          txns.push({
+            id: `txn_${txns.length + 1}`, user_id: user.id, plan: a.p_plan, amount: a.p_amount ?? 0,
+            razorpay_order_id: a.p_subscription_id, razorpay_payment_id: a.p_payment_id,
+            razorpay_signature: 'subscription', status: 'success', invoice_number: `INV-${a.p_payment_id}`,
+            created_at: new Date().toISOString()
+          });
+          newPayment = true;
+        }
+      }
+
+      let end = ms(user.subscription_current_end);
+      if (a.p_current_end && (end == null || ms(a.p_current_end) > end)) end = ms(a.p_current_end);
+
+      let expires = ms(user.subscription_expires_at);
+      let plan = user.subscription_plan;
+      const now = Date.now();
+      if (newPayment && end != null) {
+        plan = a.p_plan;
+        expires = Math.max(expires ?? now, end + (a.p_grace_days ?? 3) * 86400000);
+      }
+
+      let outcome;
+      const lastAt = ms(user.subscription_event_at);
+      if (a.p_status != null && (lastAt == null || ms(a.p_event_at) >= lastAt)) {
+        user.subscription_status = a.p_status;
+        user.subscription_event_at = a.p_event_at;
+        if (a.p_status === 'halted') expires = Math.min(expires ?? now, now);
+        else if ((a.p_status === 'cancelled' || a.p_status === 'completed') && end != null) {
+          expires = Math.min(expires ?? end, end);
+        }
+        outcome = newPayment ? 'charged' : 'status';
+      } else {
+        outcome = newPayment ? 'charged_stale_status' : 'stale';
+      }
+
+      user.subscription_current_end = end != null ? new Date(end).toISOString() : null;
+      user.subscription_plan = plan;
+      user.subscription_expires_at = expires != null ? new Date(expires).toISOString() : null;
+      ev.outcome = outcome;
+      return {
+        data: [{ outcome, affected_user: user.id, new_plan: plan, new_expires_at: user.subscription_expires_at }],
+        error: null
+      };
     },
 
     /**

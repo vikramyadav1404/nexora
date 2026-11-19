@@ -117,7 +117,12 @@ function ownerUser(row, extras = {}) {
       razorpaySubscriptionId: row.razorpay_subscription_id || '',
       // Undefined until migration 014 is applied, which reads as "eligible" --
       // the same answer every existing account should get anyway.
-      trialUsedAt: row.trial_used_at || null
+      trialUsedAt: row.trial_used_at || null,
+      // Recurring billing (migration 024): Razorpay's status, 'none' for
+      // one-time plans; autoRenew is whether a future charge is expected.
+      status: row.subscription_status || 'none',
+      autoRenew: ['created', 'authenticated', 'active', 'pending'].includes(row.subscription_status),
+      currentEnd: row.subscription_current_end || null
     },
 
     // Quota counters. The client renders "3 posts left today" from these.

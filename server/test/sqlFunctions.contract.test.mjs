@@ -87,6 +87,168 @@ async function assertThrowawayTarget(client) {
   }
 }
 
+/**
+ * Migration 024: apply_subscription_event, against real Postgres.
+ *
+ * Razorpay webhooks are at-least-once and unordered, and the first payment is
+ * reported twice (browser verify + webhook). The guarantees live in this one
+ * function, so they are tested here with real concurrency.
+ */
+const BILL_SCHEMA = 'contract_billing';
+const BU = '00000000-0000-4000-8000-0000000000e1';
+const BSUB = 'sub_CONTRACT';
+
+run('recurring billing events (migration 024, real Postgres)', () => {
+  let admin;
+  let pool;
+
+  beforeAll(async () => {
+    admin = new pg.Client({ connectionString: DB_URL });
+    await admin.connect();
+    await assertThrowawayTarget(admin);
+    await admin.query(`
+      DROP SCHEMA IF EXISTS ${BILL_SCHEMA} CASCADE;
+      CREATE SCHEMA ${BILL_SCHEMA};
+      SET search_path TO ${BILL_SCHEMA};
+      CREATE TABLE users (
+        id UUID PRIMARY KEY,
+        subscription_plan TEXT DEFAULT 'free' CHECK (subscription_plan IN ('free','bronze','silver','gold')),
+        subscription_expires_at TIMESTAMPTZ,
+        razorpay_subscription_id TEXT DEFAULT ''
+      );
+      CREATE TABLE transactions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        plan TEXT NOT NULL CHECK (plan IN ('bronze','silver','gold')),
+        amount NUMERIC(10,2) NOT NULL, currency TEXT DEFAULT 'INR',
+        razorpay_order_id TEXT DEFAULT '', razorpay_payment_id TEXT DEFAULT '',
+        razorpay_signature TEXT DEFAULT '',
+        status TEXT DEFAULT 'pending' CHECK (status IN ('pending','success','failed')),
+        invoice_number TEXT DEFAULT '', invoice_date TIMESTAMPTZ DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    // The whole file, twice: it must be re-runnable.
+    await admin.query(mig('024_recurring_billing.sql'));
+    await admin.query(mig('024_recurring_billing.sql'));
+    pool = new pg.Pool({ connectionString: DB_URL, max: 6, options: `-c search_path=${BILL_SCHEMA}` });
+  });
+
+  afterAll(async () => {
+    if (pool) await pool.end();
+    if (admin) {
+      await admin.query(`DROP SCHEMA IF EXISTS ${BILL_SCHEMA} CASCADE;`).catch(() => {});
+      await admin.end();
+    }
+  });
+
+  const DAY = 86400000;
+  const T0 = Date.UTC(2026, 10, 1);
+  const iso = (ms) => new Date(ms).toISOString();
+
+  async function reset() {
+    await admin.query('TRUNCATE transactions, billing_events; DELETE FROM users;');
+    await admin.query(`INSERT INTO users (id, razorpay_subscription_id) VALUES ($1, $2)`, [BU, BSUB]);
+  }
+
+  const apply = (e, via = pool) => via.query(
+    `SELECT * FROM apply_subscription_event($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [e.id, e.type || 'subscription.charged', iso(e.at ?? T0), e.sub ?? BSUB, e.status ?? null, e.plan ?? 'gold',
+     e.end != null ? iso(e.end) : null, e.payment ?? null, e.amount ?? 1000, 3]
+  ).then((r) => r.rows[0]);
+
+  const row = async () => (await admin.query(
+    `SELECT subscription_plan, subscription_status, subscription_expires_at, subscription_current_end
+       FROM users WHERE id = $1`, [BU])).rows[0];
+  const txnCount = async () => (await admin.query('SELECT count(*)::int AS n FROM transactions')).rows[0].n;
+
+  it('existing users are untouched by the migration: status none', async () => {
+    await reset();
+    expect((await row()).subscription_status).toBe('none');
+  });
+
+  it('a charge grants the period plus grace; a redelivery of the same event is a no-op', async () => {
+    await reset();
+    const first = await apply({ id: 'evt_1', status: 'active', end: T0 + 30 * DAY, payment: 'pay_1' });
+    const again = await apply({ id: 'evt_1', status: 'active', end: T0 + 60 * DAY, payment: 'pay_2' });
+
+    expect(first.outcome).toBe('charged');
+    expect(again.outcome).toBe('duplicate');
+    const r = await row();
+    expect(r.subscription_plan).toBe('gold');
+    expect(r.subscription_expires_at.getTime()).toBe(T0 + 33 * DAY);
+    expect(await txnCount()).toBe(1);
+  });
+
+  it('REGRESSION: verify and webhook reporting the same payment at once extend once', async () => {
+    /*
+     * Made deterministic rather than hoping two calls overlap: A applies the
+     * payment inside an open transaction and holds it; B reports the same
+     * payment meanwhile. With the user-row lock, B waits for A's commit and
+     * then sees the payment. Without it, B sees nothing committed and records
+     * the payment again -- two transactions, two extensions.
+     */
+    await reset();
+    const a = await pool.connect();
+    const b = await pool.connect();
+    try {
+      await a.query('BEGIN');
+      await apply({ id: 'verify:pay_1', at: 0, status: 'active', end: T0 + 30 * DAY, payment: 'pay_1' }, a);
+      const second = apply({ id: 'evt_web_1', status: 'active', end: T0 + 30 * DAY, payment: 'pay_1' }, b);
+      await new Promise((r) => setTimeout(r, 300));
+      await a.query('COMMIT');
+      const r2 = await second;
+      expect(r2.outcome.startsWith('charged')).toBe(false);
+    } finally {
+      a.release();
+      b.release();
+    }
+    expect(await txnCount()).toBe(1);
+    expect((await row()).subscription_expires_at.getTime()).toBe(T0 + 33 * DAY);
+  });
+
+  it('REGRESSION: an older event cannot undo a newer status', async () => {
+    await reset();
+    await apply({ id: 'evt_charge', status: 'active', end: T0 + 30 * DAY, payment: 'pay_1', at: T0 });
+    await apply({ id: 'evt_halt', type: 'subscription.halted', status: 'halted', at: T0 + 40 * DAY });
+    const late = await apply({ id: 'evt_old_active', type: 'subscription.activated', status: 'active', at: T0 + 1 });
+    expect(late.outcome).toBe('stale');
+    expect((await row()).subscription_status).toBe('halted');
+  });
+
+  it('halted ends access now; cancelled keeps access to the period end without grace', async () => {
+    await reset();
+    const far = Date.now() + 30 * DAY;
+    await apply({ id: 'c1', status: 'active', end: far, payment: 'pay_1', at: Date.now() - 1000 });
+    await apply({ id: 'c2', type: 'subscription.cancelled', status: 'cancelled', end: far, at: Date.now() });
+    expect((await row()).subscription_expires_at.getTime()).toBe(far);  // the period end, not end + grace
+
+    await apply({ id: 'c3', type: 'subscription.halted', status: 'halted', at: Date.now() + 1000 });
+    expect((await row()).subscription_expires_at.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('the period end only moves forward', async () => {
+    await reset();
+    await apply({ id: 'p1', status: 'active', end: T0 + 60 * DAY, payment: 'pay_2', at: T0 + 2 });
+    await apply({ id: 'p0', status: 'active', end: T0 + 30 * DAY, at: T0 + 1 });
+    expect((await row()).subscription_current_end.getTime()).toBe(T0 + 60 * DAY);
+  });
+
+  it('an unknown subscription is recorded and changes nothing', async () => {
+    await reset();
+    const r = await apply({ id: 'u1', sub: 'sub_NOBODY', status: 'active', end: T0, payment: 'pay_9' });
+    expect(r.outcome).toBe('unknown_subscription');
+    expect(await txnCount()).toBe(0);
+  });
+
+  it('an unknown status is refused, and the event is not swallowed as processed', async () => {
+    await reset();
+    await expect(apply({ id: 'bad1', status: 'exploded' })).rejects.toThrow(/unknown subscription status/);
+    const { rows } = await admin.query(`SELECT count(*)::int AS n FROM billing_events WHERE event_id = 'bad1'`);
+    expect(rows[0].n).toBe(0);  // a redelivery after a fix is not mistaken for a duplicate
+  });
+});
+
 run('SQL race-guard functions (real Postgres)', () => {
   let client;
 
