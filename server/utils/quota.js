@@ -1,6 +1,4 @@
-const { isToday } = require('../db/helpers');
-
-let warnedMissing = false;
+const { missingFunctionError } = require('./raceFunctions');
 
 /**
  * Take one slot from a user's daily allowance, atomically.
@@ -20,11 +18,14 @@ let warnedMissing = false;
  * at worst burn a slot on a request that then fails, which is the safer
  * direction.
  *
+ * Callers still pass `userRow`; it is no longer read. The count always comes
+ * from the locked row, never from the copy loaded at the start of the request.
+ *
  * @param {'question'|'post'} kind
  * @param {number} limit - Infinity for unlimited
  * @returns {Promise<{allowed: boolean, used: number}>}
  */
-async function claimDailyQuota(db, { userId, kind, limit, userRow }) {
+async function claimDailyQuota(db, { userId, kind, limit }) {
   const rpcLimit = limit === Infinity ? null : limit;
 
   const { data, error } = await db.rpc('claim_daily_quota', {
@@ -40,42 +41,14 @@ async function claimDailyQuota(db, { userId, kind, limit, userRow }) {
   }
 
   /*
-   * PGRST202 is "function not found" -- migration 015 has not been applied to
-   * this database yet. Falling back to the old read-then-write keeps the app
-   * working rather than 500ing every question and post, at the cost of the race
-   * being open until the migration lands. Warned once so it is visible in logs
-   * without flooding them.
-   *
-   * Any other error is a real failure and must not be swallowed into a silent
-   * allow -- that would turn a database problem into an unlimited quota.
+   * No error is swallowed into a silent allow -- that would turn a database
+   * problem into an unlimited quota. PGRST202 ("function missing") used to fall
+   * back to the old read-then-write, which is exactly the farmable race above;
+   * decision 0006 retired that fallback, so it fails loudly instead. Nothing is
+   * created, because the claim happens before the work it gates.
    */
-  if (error.code !== 'PGRST202') throw error;
-
-  if (!warnedMissing) {
-    warnedMissing = true;
-    console.warn('claim_daily_quota missing (migration 015 not applied) — daily limits are not race-safe');
-  }
-
-  return legacyClaim(db, { userId, kind, limit, userRow });
-}
-
-/** The pre-015 behaviour, kept only for databases without the function. */
-async function legacyClaim(db, { userId, kind, limit, userRow }) {
-  const countCol = kind === 'question' ? 'questions_today' : 'posts_today';
-  const dateCol = kind === 'question' ? 'last_question_date' : 'last_post_date';
-
-  let used = userRow?.[countCol] || 0;
-  if (!isToday(userRow?.[dateCol])) used = 0;
-
-  if (limit !== Infinity && used >= limit) return { allowed: false, used };
-
-  used += 1;
-  await db.from('users').update({
-    [countCol]: used,
-    [dateCol]: new Date().toISOString()
-  }).eq('id', userId);
-
-  return { allowed: true, used };
+  if (error.code === 'PGRST202') throw missingFunctionError('claim_daily_quota', error);
+  throw error;
 }
 
 module.exports = { claimDailyQuota };
