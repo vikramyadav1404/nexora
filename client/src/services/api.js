@@ -45,6 +45,9 @@ export function getAccessToken() {
 }
 
 axios.interceptors.request.use((config) => {
+  // Remembered so a 401 can tell "this token is dead" from "a refresh has
+  // already replaced the token this request went out with".
+  config._sentToken = accessToken;
   if (accessToken) config.headers.Authorization = `Bearer ${accessToken}`;
 
   // FormData needs the browser to set multipart boundary — don't force Content-Type
@@ -105,6 +108,19 @@ axios.interceptors.response.use(
     // replay. `_retried` stops a genuinely-unauthorised request from looping.
     if (status === 401 && !config._retried && !config._skipAuthRetry && !isAuthCall) {
       config._retried = true;
+
+      /*
+       * Sent with a token that has since been replaced: a refresh finished
+       * while this request was still in flight. Replay with the current token
+       * instead of refreshing again. The single-flight guard above only joins
+       * refreshes that overlap in time, so without this every request issued
+       * during a refresh started a second one once its 401 came back -- an
+       * extra rotation per burst. Found by e2e/session.spec.js.
+       */
+      if (accessToken && config._sentToken !== accessToken) {
+        return axios(config);
+      }
+
       try {
         await refreshAccessToken();
         return axios(config);
