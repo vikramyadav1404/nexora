@@ -40,6 +40,29 @@ function readStamp() {
 }
 
 /**
+ * A Vercel Git deployment: Vercel builds exactly one commit and says which.
+ *
+ * `npm run deploy` (CLI) uploads no git metadata, which is why the stamp
+ * exists. A deployment Vercel builds from the connected GitHub repository is
+ * the opposite case: there is no stamp (version.generated.json is gitignored),
+ * but VERCEL_GIT_COMMIT_SHA is set by the platform and cannot be stale, and the
+ * tree is the commit itself, so it is never dirty. Read only when no stamp was
+ * found; anything that is not a full-length SHA is refused rather than trusted.
+ */
+function readVercelGit() {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA;
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/i.test(sha)) return null;
+  return {
+    commit: sha,
+    commitShort: sha.slice(0, 7),
+    branch: process.env.VERCEL_GIT_COMMIT_REF || null,
+    dirty: false,
+    stamped: true,
+    source: 'vercel-git'
+  };
+}
+
+/**
  * Local development convenience only.
  *
  * Serverless has no git binary and a read-only filesystem, so this is wrapped
@@ -71,7 +94,7 @@ function readLocalGit() {
   }
 }
 
-const build = readStamp() || readLocalGit() || { stamped: false };
+const build = readStamp() || readVercelGit() || readLocalGit() || { stamped: false };
 
 module.exports = {
   name: 'Nexora',
@@ -85,7 +108,10 @@ module.exports = {
   committedAt: build.committedAt ?? null,
   builtAt: build.builtAt ?? null,
 
-  /** True only when a deploy-time stamp was found — i.e. the commit is trustworthy. */
+  /**
+   * True only when the commit is trustworthy: a deploy-time stamp was found,
+   * or Vercel built this deployment from Git and named the commit itself.
+   */
   stamped: build.stamped === true,
 
   /** True when the stamped tree had uncommitted changes; null when unknown. */

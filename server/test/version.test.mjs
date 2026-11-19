@@ -41,6 +41,8 @@ afterEach(() => {
   if (savedVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = savedVercel;
   delete process.env.VERCEL_DEPLOYMENT_ID;
+  delete process.env.VERCEL_GIT_COMMIT_SHA;
+  delete process.env.VERCEL_GIT_COMMIT_REF;
 });
 
 describe('a stamped build', () => {
@@ -122,6 +124,52 @@ describe('an unstamped build', () => {
     // unidentifiable a deploy is allowed to be.
     expect(v.deploymentId).toBe('dpl_TestDeployment123');
     expect(v.stamped).toBe(false);
+  });
+});
+
+describe('a Vercel Git deployment (no stamp)', () => {
+  /*
+   * Once the project builds from the connected GitHub repository there is no
+   * `npm run deploy`, so no stamp. Vercel names the commit it built instead.
+   */
+  it('reports the commit Vercel built, as trustworthy and clean', () => {
+    try { fs.unlinkSync(STAMP); } catch { /* already absent */ }
+    process.env.VERCEL = '1';
+    process.env.VERCEL_GIT_COMMIT_SHA = 'c'.repeat(40);
+    process.env.VERCEL_GIT_COMMIT_REF = 'main';
+
+    const v = loadVersion();
+
+    expect(v.commit).toBe('c'.repeat(40));
+    expect(v.commitShort).toBe('ccccccc');
+    expect(v.branch).toBe('main');
+    expect(v.stamped).toBe(true);
+    expect(v.dirty).toBe(false);
+    expect(v.source).toBe('vercel-git');
+  });
+
+  it('REGRESSION: an empty or partial VERCEL_GIT_COMMIT_SHA is refused, not half-trusted', () => {
+    // A CLI deploy has the variable empty; that must still read as unknown.
+    try { fs.unlinkSync(STAMP); } catch { /* already absent */ }
+    process.env.VERCEL = '1';
+
+    for (const bad of ['', 'abc1234', 'not-a-sha'.padEnd(40, 'z')]) {
+      process.env.VERCEL_GIT_COMMIT_SHA = bad;
+      const v = loadVersion();
+      expect(v.stamped, JSON.stringify(bad)).toBe(false);
+      expect(v.commit, JSON.stringify(bad)).toBeNull();
+    }
+  });
+
+  it('a deploy-time stamp still wins when both are present', () => {
+    fs.writeFileSync(STAMP, JSON.stringify({ commit: 'd'.repeat(40), commitShort: 'ddddddd' }));
+    process.env.VERCEL = '1';
+    process.env.VERCEL_GIT_COMMIT_SHA = 'e'.repeat(40);
+
+    const v = loadVersion();
+
+    expect(v.commit).toBe('d'.repeat(40));
+    expect(v.source).toBe('stamp');
   });
 });
 
