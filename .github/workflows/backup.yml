@@ -57,7 +57,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # supabase-js needs a native WebSocket to create a client, which
+          # Node only has from 22. On 20 the backup cannot reach the database.
+          node-version: 22
           cache: npm
           cache-dependency-path: server/package-lock.json
 
