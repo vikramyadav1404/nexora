@@ -28,7 +28,7 @@ Supabase Postgres — all permanent data
 | Digests | `routes/digests.js` |
 | Plans / rewards | `subscriptions.js`, `rewards.js` |
 
-Demo (`routes/demo.js`) is **only** used when keys are missing or `DEMO_MODE=true`.
+There is no demo backend: without Supabase keys the API refuses to start.
 
 ## Activate real backend (required — your account)
 
@@ -42,7 +42,6 @@ Supabase → SQL Editor → run entire file:
 ### 2) `server/.env`
 
 ```env
-DEMO_MODE=false
 SUPABASE_URL=https://YOUR_REF.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...service_role_secret...
 JWT_SECRET=any_long_random_string
@@ -74,7 +73,7 @@ Server must print:
 
 ### 5) Use app for real
 1. Open http://127.0.0.1:5173  
-2. **Register** (not demo@)  
+2. **Register** a user  
 3. Complete interests onboarding (auto-follows hubs → you can post)  
 4. Confirm rows in Supabase Table Editor  
 5. Restart server → still logged in / data remains  
@@ -94,6 +93,5 @@ VITE_API_URL=https://your-api.onrender.com
 - [ ] New users persist in Supabase
 - [ ] Posts + questions persist after restart
 - [ ] Notifications / search / spaces work against DB
-- [ ] No reliance on demo@nexora.com for real users
 
-Until Supabase keys are set, the app safely runs in **demo** so you can still develop UI.
+Until Supabase keys are set, the API does not start; set them first.

@@ -6,7 +6,7 @@
 
 ## Before you start
 
-1. Supabase project works locally (`DEMO_MODE=false`, tables OK).
+1. Supabase project works locally (tables OK).
 2. You have free accounts:
    - [GitHub](https://github.com)
    - [Render](https://render.com)
@@ -63,7 +63,6 @@ Login to GitHub in the browser if Git asks.
 | Key | Value |
 |-----|--------|
 | `NODE_ENV` | `production` |
-| `DEMO_MODE` | `false` |
 | `SUPABASE_URL` | `https://YOUR_PROJECT_REF.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | *(your secret key from Supabase)* |
 | `JWT_SECRET` | *(long random string, e.g. 40+ chars)* |
@@ -176,7 +175,7 @@ Still set secret env vars manually (`SUPABASE_*`, `CLIENT_URL`).
 | Frontend calls localhost | `VITE_API_URL` missing → set + **redeploy** Vercel |
 | CORS error | `CLIENT_URL` must match exact Vercel origin (https, no slash) |
 | 503 / tables missing | Run `setup_step_a.sql` on Supabase |
-| Demo mode on Render | `DEMO_MODE=false` + real service_role key |
+| API refuses to start | `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` missing or placeholders |
 | Images break after restart | Enable `USE_SUPABASE_STORAGE=true` |
 | Cold start slow | Normal on free Render; upgrade or ping `/api/ready` |
 
@@ -187,7 +186,6 @@ Still set secret env vars manually (`SUPABASE_*`, `CLIENT_URL`).
 - [ ] `server/.env` never on GitHub  
 - [ ] Service role key only on Render (not Vercel, not client)  
 - [ ] Strong `JWT_SECRET` in production  
-- [ ] `DEMO_MODE=false`  
 - [ ] Make first admin: Supabase `users.role = admin`  
 
 ---

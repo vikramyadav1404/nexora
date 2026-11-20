@@ -27,7 +27,6 @@ npm run verify:supabase
 Copy `server/.env.example` → `server/.env` and fill:
 
 ```env
-DEMO_MODE=false
 SUPABASE_URL=https://xxxxxxxx.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOi...   # service_role (server only!)
 JWT_SECRET=your_jwt_secret
@@ -88,4 +87,4 @@ React  →  Express (JWT, business rules)  →  Supabase Postgres
 | `Missing Supabase config` | Set `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` |
 | `relation "users" does not exist` | Run `setup_step_a.sql` |
 | `Invalid API key` | Use **service_role**, not anon |
-| Falls back to DEMO | Keys still placeholders or `DEMO_MODE=true` |
+| Server refuses to start | Keys missing or still placeholders (there is no demo fallback) |

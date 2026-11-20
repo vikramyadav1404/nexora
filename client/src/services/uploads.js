@@ -91,7 +91,7 @@ export async function renderCrop(file, kind, crop) {
   ctx.drawImage(img, source.x, source.y, source.width, source.height, 0, 0, outW, outH);
 
   const blob = await canvasToBlob(canvas);
-  return { blob, width: outW, height: outH, previewUrl: canvas.toDataURL(OUTPUT_TYPE, OUTPUT_QUALITY) };
+  return { blob, width: outW, height: outH };
 }
 
 /**
@@ -153,7 +153,7 @@ export async function uploadProfileMedia({ file, kind, crop, onProgress, onStage
   if (!TARGET[kind]) throw new UploadError(`Unknown media kind: ${kind}`);
 
   onStage?.('cropping');
-  const { blob, previewUrl } = await renderCrop(file, kind, crop);
+  const { blob } = await renderCrop(file, kind, crop);
 
   onStage?.('uploading');
   const { data: ticket } = await api.post('/api/uploads/presign', {
@@ -161,17 +161,6 @@ export async function uploadProfileMedia({ file, kind, crop, onProgress, onStage
     mimeType: OUTPUT_TYPE,
     size: blob.size
   });
-
-  // Demo mode has no bucket; the server takes the bytes as a data URL instead.
-  if (ticket.demo) {
-    onProgress?.(100);
-    onStage?.('processing');
-    const { data } = await api.patch(`/api/users/me/${kind}`, {
-      key: ticket.key,
-      dataUrl: previewUrl
-    });
-    return data.user;
-  }
 
   await putToStorage(ticket.signedUrl, blob, ticket.contentType, onProgress);
 

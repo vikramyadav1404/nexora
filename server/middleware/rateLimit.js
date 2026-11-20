@@ -93,13 +93,8 @@ class PostgresStore {
   }
 }
 
-/**
- * Demo mode has no database, and a single local process makes MemoryStore
- * correct anyway — only reach for Postgres when we're actually on Supabase.
- */
+/** Counters live in Postgres, so every serverless instance shares them. */
 function makeStore(name) {
-  const demo = process.env.DEMO_MODE === 'true' || process.env.DEMO_MODE === '1';
-  if (demo) return undefined;
   return new PostgresStore(name);
 }
 

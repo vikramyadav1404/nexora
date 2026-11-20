@@ -7,7 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const { apiLimiter } = require('./middleware/rateLimit');
 const { setMediaColumnSupport } = require('./db/helpers');
-const { shouldUseDemoMode, mayPublishDemoLogin } = require('./utils/demoMode');
+const { assertSupabaseConfig } = require('./utils/supabaseConfig');
 const { appEnv, isProduction } = require('./utils/appEnv');
 const { assertJwtSecret } = require('./utils/tokens');
 const { isAllowedOrigin, allowedOrigins } = require('./utils/corsOrigins');
@@ -120,7 +120,6 @@ const appVersion = require('./version');
 app.get('/api/version', (req, res) => {
   res.json({
     ...appVersion,
-    demoMode: null,
     env: process.env.NODE_ENV || 'development',
     /*
      * `environment` is not `env`. NODE_ENV is 'production' on every Vercel
@@ -213,58 +212,13 @@ async function startServer(opts = {}) {
    */
 
   /*
-   * Before anything else. A server that cannot sign a session correctly should
-   * not start and look healthy -- the same reasoning as refusing the silent
-   * demo-mode fallback below.
-   *
-   * Demo mode is exempt: routes/demo.js signs with its own secret and holds no
-   * real user data, so requiring a production-strength JWT_SECRET to run a
-   * local demo would be friction with no security value.
+   * Before anything else. A server that cannot sign a session correctly, or
+   * has no database to talk to, should not start and look healthy. There is
+   * no in-memory fallback any more (see utils/supabaseConfig.js): missing or
+   * placeholder Supabase keys stop the server here, in every environment.
    */
-  const demoMode = shouldUseDemoMode();
-  if (!demoMode) assertJwtSecret();
-
-  if (demoMode) {
-    const { initDemoStore } = require('./db/demoStore');
-    await initDemoStore();
-
-    // The in-memory store is plain objects, so there is no migration to miss.
-    setMediaColumnSupport(true);
-
-    app.get('/api/health', (req, res) =>
-      res.json({
-        status: 'OK',
-        message: 'Nexora API running (DEMO MODE)',
-        version: appVersion.version,
-        db: 'demo-memory',
-        realBackend: false,
-        // Withheld in production even when the demo was started deliberately —
-        // see utils/demoMode.js.
-        ...(mayPublishDemoLogin()
-          ? { demoLogin: { email: 'demo@nexora.com', password: 'demo1234' } }
-          : {}),
-        hint: 'Set real SUPABASE_* keys and DEMO_MODE=false for production backend'
-      })
-    );
-    app.get('/api/ready', (req, res) => res.json({ ready: true, demo: true, version: appVersion.version }));
-
-    app.use('/api', require('./routes/demo'));
-
-    // Same handler as the real path -- see the note there. Demo mode has no
-    // real data, but it has the same routes, and a second implementation is
-    // how the two drift.
-    app.use((err, req, res, next) => sendError(res, err, req));
-
-    if (shouldListen) {
-      app.listen(PORT, () => {
-        console.log('');
-        console.log('Nexora server  http://localhost:' + PORT);
-        console.log('DEMO MODE (in-memory)');
-        console.log('');
-      });
-    }
-    return app;
-  }
+  assertSupabaseConfig();
+  assertJwtSecret();
 
   // real db path
   const { getSupabase } = require('./db/supabase');
