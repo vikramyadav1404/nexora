@@ -247,3 +247,96 @@ describe('concurrent writes do not revert each other', () => {
     }
   });
 });
+
+/*
+ * Migration 021: posting and deleting an answer move the author's points in the
+ * same transaction as the answer row, against the current balance.
+ *
+ * Both routes used to write `points = req.userRow.points ± 5` -- the copy
+ * protect loaded when the request started -- so anything that changed the
+ * balance in between was reverted. To reproduce that, these tests change the
+ * balance after protect has loaded the user and before the points move, by
+ * wrapping the RPC: exactly the window the old code wrote across.
+ */
+describe('posting and deleting an answer do not revert concurrent points', () => {
+  const QUESTION = 'question-1';
+
+  function setupQA({ points = 10 } = {}) {
+    setup({ points });
+    db._tables.questions = [{ id: QUESTION, author_id: VOTER, title: 'q', accepted_answer_id: null }];
+  }
+
+  /** Run `sideEffect` just before the named RPC, as a concurrent request would. */
+  function beforeRpc(name, sideEffect) {
+    const original = db.rpc.bind(db);
+    db.rpc = async (fn, args) => {
+      if (fn === name) await sideEffect();
+      return original(fn, args);
+    };
+  }
+
+  const post = (body = 'my answer') =>
+    request(app()).post(`/api/answers/${QUESTION}`)
+      .set('Authorization', `Bearer ${token(AUTHOR)}`)
+      .send({ body });
+
+  const del = (id, as = AUTHOR) =>
+    request(app()).delete(`/api/answers/${id}`)
+      .set('Authorization', `Bearer ${token(as)}`);
+
+  it('REGRESSION: a downvote landing mid-request survives posting an answer', async () => {
+    setupQA({ points: 10 });
+    // A downvote on an older answer lands after protect read 10 points.
+    beforeRpc('create_answer', async () => { author().points = 9; });
+
+    const res = await post();
+
+    expect(res.status).toBe(201);
+    expect(author().points).toBe(14);       // 9 + 5, not the stale 10 + 5
+    expect(author().total_answers).toBe(4);
+    expect(db._tables.answers.filter(a => a.author_id === AUTHOR)).toHaveLength(2);
+  });
+
+  it('REGRESSION: an award landing mid-request survives deleting an answer', async () => {
+    setupQA({ points: 20 });
+    db._tables.answers.push({ id: 'answer-2', author_id: AUTHOR, question_id: QUESTION, points_awarded: true });
+    beforeRpc('delete_answer', async () => { author().points = 25; }); // +5 elsewhere
+
+    const res = await del('answer-2');
+
+    expect(res.status).toBe(200);
+    expect(author().points).toBe(20);       // 25 - 5, not the stale 20 - 5
+    expect(db._tables.answers.find(a => a.id === 'answer-2')).toBeUndefined();
+  });
+
+  it('only the author can delete, and nothing moves when refused', async () => {
+    setupQA({ points: 20 });
+    const res = await del(ANSWER, VOTER);
+    expect(res.status).toBe(403);
+    expect(author().points).toBe(20);
+    expect(db._tables.answers.find(a => a.id === ANSWER)).toBeDefined();
+  });
+
+  it('a missing function is a 503 that writes nothing (no racy fallback)', async () => {
+    setupQA({ points: 10 });
+    delete db._rpc.create_answer;
+
+    const res = await post();
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/021_answer_points_atomic\.sql/);
+    expect(author().points).toBe(10);
+    expect(db._tables.answers.filter(a => a.author_id === AUTHOR)).toHaveLength(1);
+  });
+
+  it('a missing cast_answer_vote is a 503 that records no vote', async () => {
+    setupQA({ points: 10 });
+    delete db._rpc.cast_answer_vote;
+
+    const res = await vote('up');
+
+    expect(res.status).toBe(503);
+    expect(voteRow()).toBeUndefined();
+    expect(author().total_upvotes_received).toBe(0);
+  });
+});

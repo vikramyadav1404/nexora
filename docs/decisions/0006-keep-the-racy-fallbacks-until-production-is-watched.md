@@ -97,6 +97,9 @@ also a missing function — leaves the vote recorded without its points. The
 fix for that is one SQL function that writes the vote and the points in the
 same transaction, not a racy fallback.
 
+*Update:* fixed by migration 021 (`cast_answer_vote`), which also moved
+answer creation and deletion onto the same pattern.
+
 Migrations 005, 015 and 016 still describe the fallback in their comments.
 They are left as written: applied migrations are a record, not documentation
 to keep current.

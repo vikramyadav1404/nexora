@@ -161,6 +161,17 @@ class Query {
   }
 }
 
+/** Mirrors compute_badges (005) — the thresholds the SQL functions use. */
+function fakeBadges(points, answers) {
+  const badges = [];
+  if (points >= 50) badges.push('bronze');
+  if (points >= 200) badges.push('silver');
+  if (points >= 500) badges.push('gold');
+  if (answers >= 10) badges.push('contributor');
+  if (answers >= 50) badges.push('expert');
+  return badges;
+}
+
 function createFakeSupabase(seed = {}) {
   const tables = {
     users: [],
@@ -192,7 +203,10 @@ function createFakeSupabase(seed = {}) {
     claim_daily_quota: { required: ['p_user_id', 'p_kind', 'p_limit'] },
     transfer_points: { required: ['p_from_user', 'p_to_user', 'p_points'], optional: ['p_message'] },
     rate_limit_hit: { required: ['p_key', 'p_window_ms'] },
-    rate_limit_reset: { required: ['p_key'] }
+    rate_limit_reset: { required: ['p_key'] },
+    cast_answer_vote: { required: ['p_answer_id', 'p_voter_id', 'p_type'] },
+    create_answer: { required: ['p_question_id', 'p_author_id', 'p_body'] },
+    delete_answer: { required: ['p_answer_id', 'p_author_id'] }
   };
 
   function assertRpcSignature(name, args = {}) {
@@ -307,6 +321,130 @@ function createFakeSupabase(seed = {}) {
         error: null
       };
     },
+    /**
+     * Mirrors migration 021's cast_answer_vote: the vote row, points_applied,
+     * the one-shot 5-upvote bonus and the author's points in one step. The
+     * real function runs it in one transaction under a lock on the answer;
+     * sqlFunctions.contract.test.mjs exercises that against Postgres.
+     */
+    cast_answer_vote({ p_answer_id, p_voter_id, p_type }) {
+      if (p_type !== 'up' && p_type !== 'down') {
+        return { data: null, error: { code: '23514', message: 'vote type must be up or down' } };
+      }
+      const answers = tables.answers || [];
+      const votes = (tables.answer_votes ||= []);
+      const answer = answers.find(a => a.id === p_answer_id);
+      if (!answer) return { data: null, error: { code: 'P0002', message: 'answer not found' } };
+      if (answer.author_id === p_voter_id) {
+        return { data: null, error: { code: '23514', message: 'cannot vote on own answer' } };
+      }
+      const author = tables.users.find(u => u.id === answer.author_id);
+      const authorPoints = author?.points || 0;
+      const idx = votes.findIndex(v => v.answer_id === p_answer_id && v.user_id === p_voter_id);
+      const existing = idx >= 0 ? votes[idx] : null;
+
+      let pointsDelta = 0;
+      let upvotesDelta = 0;
+      const upsert = (row) => {
+        if (idx >= 0) votes[idx] = { ...votes[idx], ...row };
+        else votes.push({ answer_id: p_answer_id, user_id: p_voter_id, ...row });
+      };
+
+      if (p_type === 'up') {
+        if (existing?.vote_type === 'up') {
+          votes.splice(idx, 1);
+          upvotesDelta = -1;
+        } else {
+          if (existing?.vote_type === 'down' && existing.points_applied !== false) pointsDelta += 1;
+          upvotesDelta = 1;
+          upsert({ vote_type: 'up', points_applied: false });
+        }
+      } else if (existing?.vote_type === 'down') {
+        votes.splice(idx, 1);
+        if (existing.points_applied !== false) pointsDelta = 1;
+      } else {
+        if (existing?.vote_type === 'up') upvotesDelta = -1;
+        const applied = authorPoints > 0;
+        if (applied) pointsDelta = -1;
+        upsert({ vote_type: 'down', points_applied: applied });
+      }
+
+      if (p_type === 'up' && existing?.vote_type !== 'up' && !answer.bonus_points_awarded) {
+        const ups = votes.filter(v => v.answer_id === p_answer_id && v.vote_type === 'up').length;
+        if (ups >= 5) {
+          answer.bonus_points_awarded = true;
+          pointsDelta += 5;
+        }
+      }
+
+      const applied = rpcHandlers.apply_vote_points({
+        p_user_id: answer.author_id, p_points_delta: pointsDelta, p_upvotes_delta: upvotesDelta
+      });
+      if (applied.error) return applied;
+
+      const mine = votes.filter(v => v.answer_id === p_answer_id);
+      return {
+        data: [{
+          up_count: mine.filter(v => v.vote_type === 'up').length,
+          down_count: mine.filter(v => v.vote_type === 'down').length
+        }],
+        error: null
+      };
+    },
+
+    /** Mirrors migration 021's create_answer: insert plus the +5, together. */
+    create_answer({ p_question_id, p_author_id, p_body }) {
+      if (!p_body || !String(p_body).trim()) {
+        return { data: null, error: { code: '23514', message: 'answer body is required' } };
+      }
+      if (!(tables.questions || []).some(q => q.id === p_question_id)) {
+        return { data: null, error: { code: 'P0002', message: 'question not found' } };
+      }
+      const user = tables.users.find(u => u.id === p_author_id);
+      if (!user) return { data: null, error: { code: 'P0002', message: 'user not found' } };
+
+      const id = `ans_${Math.random().toString(36).slice(2, 10)}`;
+      (tables.answers ||= []).push({
+        id, question_id: p_question_id, author_id: p_author_id, body: p_body,
+        points_awarded: true, bonus_points_awarded: false, is_accepted: false,
+        created_at: new Date().toISOString()
+      });
+      user.points = (user.points || 0) + 5;
+      user.total_answers = (user.total_answers || 0) + 1;
+      user.badges = fakeBadges(user.points, user.total_answers);
+      return { data: [{ new_answer_id: id, author_points: user.points }], error: null };
+    },
+
+    /** Mirrors migration 021's delete_answer. */
+    delete_answer({ p_answer_id, p_author_id }) {
+      const answers = tables.answers || [];
+      const i = answers.findIndex(a => a.id === p_answer_id);
+      if (i < 0) return { data: null, error: { code: 'P0002', message: 'answer not found' } };
+      const answer = answers[i];
+      if (answer.author_id !== p_author_id) {
+        return { data: null, error: { code: '42501', message: 'not authorized' } };
+      }
+      const user = tables.users.find(u => u.id === answer.author_id);
+      let points = user?.points || 0;
+      if (answer.points_awarded === true) points = Math.max(0, points - 5);
+      if (answer.bonus_points_awarded === true) points = Math.max(0, points - 5);
+      const totalAnswers = Math.max(0, (user?.total_answers || 0) - 1);
+      if (user) {
+        user.points = points;
+        user.total_answers = totalAnswers;
+        user.badges = fakeBadges(points, totalAnswers);
+      }
+      for (const q of tables.questions || []) {
+        if (q.accepted_answer_id === p_answer_id) {
+          q.accepted_answer_id = null;
+          q.is_resolved = false;
+        }
+      }
+      answers.splice(i, 1);
+      tables.answer_votes = (tables.answer_votes || []).filter(v => v.answer_id !== p_answer_id);
+      return { data: [{ author_points: points }], error: null };
+    },
+
     rate_limit_hit() {
       return { data: [{ hits: 1, expires_at: new Date(Date.now() + 60000).toISOString() }], error: null };
     },
