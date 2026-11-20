@@ -1,0 +1,83 @@
+name: Nightly encrypted backup
+
+# Supabase's free tier has no point-in-time recovery or downloadable backups
+# (the dashboard shows "No backups"), and a previous project was lost with its
+# data. This takes a full copy every night, encrypted, and keeps it 14 days.
+#
+# The repository is public, and a public repository's artifacts can be
+# downloaded by any signed-in GitHub user. So the backup is only ever written
+# encrypted: BACKUP_REQUIRE_ENCRYPTION=1 makes the script refuse to run without
+# a passphrase. Only ciphertext is uploaded.
+#
+# Needs three repository secrets (Settings -> Secrets and variables -> Actions):
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, BACKUP_PASSPHRASE (long, random)
+# Decrypt a downloaded file with:
+#   BACKUP_PASSPHRASE=... npm run backup:decrypt -- nexora-<stamp>.json.enc
+
+on:
+  schedule:
+    # 02:17 UTC (07:47 IST): off the top of the hour, when scheduled runs queue.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Back up and encrypt
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+      BACKUP_REQUIRE_ENCRYPTION: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail with a sentence, not a stack trace, when a secret is missing.
+      - name: Check secrets are configured
+        run: |
+          missing=""
+          [ -n "$SUPABASE_URL" ] || missing="$missing SUPABASE_URL"
+          [ -n "$SUPABASE_SERVICE_ROLE_KEY" ] || missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          [ -n "$BACKUP_PASSPHRASE" ] || missing="$missing BACKUP_PASSPHRASE"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - run: npm ci --omit=dev
+
+      - name: Back up
+        run: npm run backup
+
+      # Belt and braces: nothing but .enc files may be uploaded.
+      - name: Verify only ciphertext was written
+        run: |
+          if ls backups/*.json >/dev/null 2>&1; then
+            echo "::error::A plaintext backup was written; refusing to upload."
+            exit 1
+          fi
+          ls -l backups/*.json.enc
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexora-backup-${{ github.run_id }}
+          path: server/backups/*.json.enc
+          retention-days: 14
+          if-no-files-found: error
