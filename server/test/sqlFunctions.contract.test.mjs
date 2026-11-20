@@ -614,3 +614,107 @@ describe('assertThrowawayTarget (decision 0005, enforced)', () => {
       .resolves.toBeUndefined();
   });
 });
+
+/**
+ * Migration 022: ranked search pages on (rank, created_at, id), and a typo
+ * alone finds a match.
+ *
+ * The cursor carries the rank exactly as the driver handed it back (a REAL
+ * parsed from text, as PostgREST's JSON does), so this also checks that the
+ * value survives the round trip well enough to compare equal.
+ */
+const SEARCH_SCHEMA = 'contract_search';
+
+run('ranked search paging and typos (migration 022, real Postgres)', () => {
+  let client;
+
+  beforeAll(async () => {
+    client = new pg.Client({ connectionString: DB_URL });
+    await client.connect();
+    await assertThrowawayTarget(client);
+    await client.query(`
+      CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+      DROP SCHEMA IF EXISTS ${SEARCH_SCHEMA} CASCADE;
+      CREATE SCHEMA ${SEARCH_SCHEMA};
+      SET search_path TO ${SEARCH_SCHEMA}, public;
+      CREATE TABLE posts (
+        id UUID PRIMARY KEY, author_id UUID, content TEXT, shares INT DEFAULT 0,
+        is_public BOOLEAN DEFAULT TRUE, interest_tags TEXT[] DEFAULT '{}', seed_key TEXT,
+        created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ,
+        search_vector tsvector GENERATED ALWAYS AS (to_tsvector('english', COALESCE(content, ''))) STORED
+      );
+      CREATE TABLE questions (
+        id UUID PRIMARY KEY, author_id UUID, title TEXT, body TEXT, tags TEXT[], views INT DEFAULT 0,
+        accepted_answer_id UUID, is_resolved BOOLEAN DEFAULT FALSE, bounty INT DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ,
+        search_vector tsvector GENERATED ALWAYS AS (
+          setweight(to_tsvector('english', COALESCE(title, '')), 'A') ||
+          setweight(to_tsvector('english', COALESCE(body, '')), 'B')
+        ) STORED
+      );
+    `);
+    for (const fn of ['search_questions', 'search_posts']) {
+      await client.query(functionBlock(mig('022_search_paging.sql'), fn));
+    }
+  });
+
+  afterAll(async () => {
+    if (client) {
+      await client.query(`DROP SCHEMA IF EXISTS ${SEARCH_SCHEMA} CASCADE;`).catch(() => {});
+      await client.end();
+    }
+  });
+
+  const pid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+  it('REGRESSION: pages past 50, every match exactly once, even with tied ranks', async () => {
+    await client.query('TRUNCATE posts;');
+    // 60 matches. Two contents, so many rows share a rank exactly and only
+    // created_at, then id, can order them. Some share a created_at too.
+    for (let n = 1; n <= 60; n++) {
+      const content = n % 3 === 0 ? 'postgres indexing deep dive and more postgres' : 'notes on postgres';
+      const at = new Date(Date.UTC(2026, 10, 1, 0, Math.floor(n / 2))).toISOString();
+      await client.query('INSERT INTO posts (id, content, created_at) VALUES ($1, $2, $3);', [pid(n), content, at]);
+    }
+
+    const seen = [];
+    let cursor = null;
+    for (let i = 0; i < 20; i++) {
+      const { rows } = await client.query(
+        'SELECT * FROM search_posts($1, $2, $3, $4, $5)',
+        ['postgres', 7, cursor?.rank ?? null, cursor?.created_at ?? null, cursor?.id ?? null]
+      );
+      seen.push(...rows.map((r) => r.id));
+      if (rows.length < 7) break;
+      cursor = rows[rows.length - 1];
+    }
+
+    expect(seen).toHaveLength(60);
+    expect(new Set(seen).size).toBe(60);
+  });
+
+  it('REGRESSION: a typo alone finds a question title and a post', async () => {
+    await client.query('TRUNCATE posts, questions;');
+    await client.query(
+      `INSERT INTO questions (id, title, body, created_at) VALUES ($1, 'How do closures work in JavaScript?', 'scope', now());`,
+      [pid(1)]
+    );
+    await client.query(
+      `INSERT INTO posts (id, content, created_at) VALUES ($1, 'Best way to learn Postgres indexing for beginners', now());`,
+      [pid(2)]
+    );
+
+    const q = await client.query('SELECT id FROM search_questions($1)', ['javscript']);
+    const p = await client.query('SELECT id FROM search_posts($1)', ['postgress']);
+    const none = await client.query('SELECT id FROM search_questions($1)', ['react']);
+
+    expect(q.rows.map((r) => r.id)).toEqual([pid(1)]);
+    expect(p.rows.map((r) => r.id)).toEqual([pid(2)]);
+    expect(none.rows).toHaveLength(0);
+  });
+
+  it('old callers passing only (p_query, p_limit) still work', async () => {
+    const { rows } = await client.query('SELECT * FROM search_posts($1, $2)', ['postgress', 5]);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+});

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import axios from '../services/api';
 import { Search as SearchIcon, Users, FileText, HelpCircle, Layers } from 'lucide-react';
@@ -32,6 +32,47 @@ export default function SearchPage() {
 
   const results = res.data || EMPTY;
   const loading = res.isLoading;
+
+  /*
+   * Further pages of the ranked lists (migration 022). The first response
+   * carries a cursor per list in `more`; each "Load more" asks for the next
+   * page of that one list and hands back the cursor after it. Reset whenever
+   * a new search result arrives, so a cursor never outlives its query.
+   */
+  const [extra, setExtra] = useState({ posts: [], questions: [] });
+  const [cursors, setCursors] = useState({ posts: null, questions: null });
+  const [loadingMore, setLoadingMore] = useState(null);
+  const [moreFailed, setMoreFailed] = useState(null);
+
+  useEffect(() => {
+    setExtra({ posts: [], questions: [] });
+    setCursors({ posts: res.data?.more?.posts || null, questions: res.data?.more?.questions || null });
+    setMoreFailed(null);
+  }, [res.data]);
+
+  const loadMore = async (type) => {
+    const cursor = cursors[type];
+    if (!cursor || loadingMore) return;
+    setLoadingMore(type);
+    setMoreFailed(null);
+    try {
+      const { data } = await axios.get('/api/search', { params: { q: urlQuery, type, cursor } });
+      setExtra(prev => {
+        const shown = new Set([...(results[type] || []), ...prev[type]].map(x => x._id || x.id));
+        const fresh = (data.items || []).filter(x => !shown.has(x._id || x.id));
+        return { ...prev, [type]: [...prev[type], ...fresh] };
+      });
+      setCursors(prev => ({ ...prev, [type]: data.nextCursor || null }));
+    } catch {
+      // Keep what is shown and the cursor, so the same button can retry.
+      setMoreFailed(type);
+    } finally {
+      setLoadingMore(null);
+    }
+  };
+
+  const questionList = [...(results.questions || []), ...extra.questions];
+  const postList = [...(results.posts || []), ...extra.posts];
 
   const submit = (e) => {
     e.preventDefault();
@@ -113,8 +154,8 @@ export default function SearchPage() {
               ))}
             </Section>
 
-            <Section title="Questions" icon={<HelpCircle size={18} />} empty={!results.questions?.length}>
-              {(results.questions || []).map(qItem => (
+            <Section title="Questions" icon={<HelpCircle size={18} />} empty={!questionList.length}>
+              {questionList.map(qItem => (
                 <button
                   key={qItem._id || qItem.id}
                   type="button"
@@ -128,15 +169,29 @@ export default function SearchPage() {
                   </div>
                 </button>
               ))}
+              <LoadMore
+                visible={!!cursors.questions}
+                loading={loadingMore === 'questions'}
+                failed={moreFailed === 'questions'}
+                onClick={() => loadMore('questions')}
+                label="Load more questions"
+              />
             </Section>
 
-            <Section title="Posts" icon={<FileText size={18} />} empty={!results.posts?.length}>
-              {(results.posts || []).map(p => (
+            <Section title="Posts" icon={<FileText size={18} />} empty={!postList.length}>
+              {postList.map(p => (
                 <div key={p._id || p.id} className="post-card">
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>{p.author?.name}</div>
                   <div className="post-content">{p.content}</div>
                 </div>
               ))}
+              <LoadMore
+                visible={!!cursors.posts}
+                loading={loadingMore === 'posts'}
+                failed={moreFailed === 'posts'}
+                onClick={() => loadMore('posts')}
+                label="Load more posts"
+              />
             </Section>
           </div>
         )}
@@ -160,6 +215,22 @@ function Section({ title, icon, empty, children }) {
         {icon} {title}
       </div>
       {empty ? <p style={{ color: 'var(--text-faint)', fontSize: 14 }}>No results</p> : children}
+    </div>
+  );
+}
+
+function LoadMore({ visible, loading, failed, onClick, label }) {
+  if (!visible) return null;
+  return (
+    <div style={{ marginTop: 12, textAlign: 'center' }}>
+      {failed && (
+        <p style={{ color: 'var(--text-faint)', fontSize: 13, marginBottom: 8 }}>
+          Couldn't load more. Try again.
+        </p>
+      )}
+      <button type="button" className="btn btn-secondary btn-sm" onClick={onClick} disabled={loading}>
+        {loading ? 'Loading…' : label}
+      </button>
     </div>
   );
 }

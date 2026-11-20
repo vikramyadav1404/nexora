@@ -27,8 +27,11 @@ const ME = { id: '00000000-0000-4000-8000-0000000000e1', name: 'Me', email: 'me@
 const ALICE = { id: '00000000-0000-4000-8000-0000000000e2', name: 'Alice Anderson', email: 'alice@nexora.test', is_active: true, avatar: '', points: 10, badges: [] };
 const BOB = { id: '00000000-0000-4000-8000-0000000000e3', name: 'Bob Baker', email: 'bob@nexora.test', is_active: true, avatar: '', points: 5, badges: [] };
 
-/** Object.keys().sort() order — 'query' precedes 'questions' ('quer' < 'ques'). */
-const SHAPE_KEYS = ['people', 'posts', 'query', 'questions', 'spaces'];
+/**
+ * Object.keys().sort() order — 'query' precedes 'questions' ('quer' < 'ques').
+ * `more` (migration 022) carries the next-page cursor of each ranked list.
+ */
+const SHAPE_KEYS = ['more', 'people', 'posts', 'query', 'questions', 'spaces'];
 
 const token = () => jwt.sign({ id: ME.id, typ: 'access' }, process.env.JWT_SECRET, { expiresIn: '1h' });
 
@@ -92,7 +95,10 @@ describe('response contract', () => {
   it('short queries return empty without touching the database', async () => {
     const res = await search('a');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ people: [], posts: [], questions: [], spaces: [], query: 'a' });
+    expect(res.body).toEqual({
+      people: [], posts: [], questions: [], spaces: [], query: 'a',
+      more: { posts: null, questions: null }
+    });
     expect(rpcCalls).toHaveLength(0);
   });
 
@@ -323,5 +329,84 @@ describe('people search', () => {
   it('rejects an unauthenticated request', async () => {
     const res = await request(app()).get('/api/users/search').query({ q: 'alice' });
     expect(res.status).toBe(401);
+  });
+});
+
+/* ────────────────────────────────────────────────────────────
+ * Paging past the first page (migration 022)
+ *
+ * The route asks each ranked function for one row more than a page; that row
+ * is the signal a next page exists, and the last row SHOWN becomes the cursor.
+ * The cursor carries the function's own (rank, created_at, id) back to it.
+ * ──────────────────────────────────────────────────────────── */
+describe('paging ranked results', () => {
+  const pid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+  const postRow = (n, rank) => ({
+    id: pid(n), author_id: ALICE.id, content: `post ${n}`, shares: 0, is_public: true,
+    interest_tags: [], seed_key: null,
+    created_at: new Date(Date.UTC(2026, 10, 1, 0, n)).toISOString(), updated_at: null, rank
+  });
+  const page = (params) =>
+    request(app()).get('/api/search').query(params).set('Authorization', `Bearer ${token()}`);
+
+  it('asks for one more than a page and returns a cursor only when it got it', async () => {
+    ranked.posts = Array.from({ length: 11 }, (_, i) => postRow(i, 1 - i / 100));
+
+    const res = await search('post');
+
+    expect(rpcCalls.find(c => c.name === 'search_posts').args.p_limit).toBe(11);
+    expect(res.body.posts).toHaveLength(10);
+    expect(res.body.more.posts).toEqual(expect.any(String));
+    expect(res.body.more.questions).toBeNull();
+  });
+
+  it('REGRESSION: the cursor is the last row shown, not the extra one', async () => {
+    ranked.posts = Array.from({ length: 11 }, (_, i) => postRow(i, 1 - i / 100));
+    const first = await search('post');
+
+    rpcCalls = [];
+    ranked.posts = [postRow(10, 0.9)];
+    const next = await page({ q: 'post', type: 'posts', cursor: first.body.more.posts });
+
+    const call = rpcCalls.find(c => c.name === 'search_posts');
+    // Row 9 was the 10th and last shown; row 10 was only the look-ahead.
+    expect(call.args.p_cursor_id).toBe(pid(9));
+    expect(call.args.p_cursor_rank).toBeCloseTo(0.91, 10);
+    expect(call.args.p_cursor_ts).toBe(postRow(9).created_at);
+    expect(next.status).toBe(200);
+    expect(next.body.type).toBe('posts');
+    expect(next.body.items.map(p => p._id || p.id)).toEqual([pid(10)]);
+    expect(next.body.nextCursor).toBeNull();
+  });
+
+  it('refuses a malformed cursor or an unknown type with 400, without querying', async () => {
+    for (const params of [
+      { q: 'post', type: 'posts', cursor: '!!!' },
+      { q: 'post', type: 'posts', cursor: Buffer.from('[1,"x","y"]').toString('base64url') },
+      { q: 'post', type: 'people', cursor: Buffer.from(JSON.stringify([1, new Date().toISOString(), pid(1)])).toString('base64url') },
+      { q: 'post', type: 'posts' }
+    ]) {
+      rpcCalls = [];
+      const res = await page(params);
+      expect(res.status, JSON.stringify(params)).toBe(400);
+      expect(rpcCalls).toHaveLength(0);
+    }
+  });
+
+  it('a next-page request before migration 022 is a 503 naming it, not a bare 500', async () => {
+    ranked.posts = Array.from({ length: 11 }, (_, i) => postRow(i, 1 - i / 100));
+    const first = await search('post');
+
+    rpcMissing = true;  // the 007 functions exist but take no cursor: PGRST202
+    const res = await page({ q: 'post', type: 'posts', cursor: first.body.more.posts });
+
+    expect(res.status).toBe(503);
+    expect(res.body.message).toMatch(/022_search_paging\.sql/);
+  });
+
+  it('the ILIKE fallback offers no cursor rather than a wrong one', async () => {
+    rpcMissing = true;
+    const res = await search('post');
+    expect(res.body.more).toEqual({ posts: null, questions: null });
   });
 });
