@@ -257,7 +257,12 @@ function shapeUser(row, extras = {}) {
       razorpaySubscriptionId: safe.razorpay_subscription_id || '',
       // Undefined until migration 014 is applied, which reads as "eligible" --
       // the same answer every existing account should get anyway.
-      trialUsedAt: safe.trial_used_at || null
+      trialUsedAt: safe.trial_used_at || null,
+      // Recurring billing (migration 024): Razorpay's status, 'none' for
+      // one-time plans; autoRenew is whether a future charge is expected.
+      status: safe.subscription_status || 'none',
+      autoRenew: ['created', 'authenticated', 'active', 'pending'].includes(safe.subscription_status),
+      currentEnd: safe.subscription_current_end || null
     },
     questionsToday: safe.questions_today || 0,
     lastQuestionDate: safe.last_question_date || null,

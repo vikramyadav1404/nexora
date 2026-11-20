@@ -57,13 +57,91 @@ function isMockMode() {
   return false;
 }
 
+// Tests swap in a fake Razorpay client here; nothing else sets it.
+let razorpayForTests = null;
+
 const getRazorpay = () => {
   if (isMockMode()) return null;
+  if (razorpayForTests) return razorpayForTests;
   return new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
     key_secret: process.env.RAZORPAY_KEY_SECRET
   });
 };
+
+/*
+ * Recurring billing (migration 024).
+ *
+ * Each paid plan maps to a Razorpay plan created in the Razorpay dashboard
+ * (monthly). Their ids come from the environment -- RAZORPAY_PLAN_BRONZE,
+ * _SILVER, _GOLD -- so test and live mode use different plans without a code
+ * change. A plan with no id configured is simply not offered as recurring; the
+ * one-time 30-day checkout above stays as it was.
+ */
+const GRACE_DAYS = 3;
+const RECURRING_CYCLES = 12;
+
+function recurringPlanId(plan) {
+  const id = process.env[`RAZORPAY_PLAN_${String(plan).toUpperCase()}`];
+  return id && !String(id).includes('YOUR_') ? id : null;
+}
+
+function recurringAvailable(plan) {
+  return !isMockMode() && !!recurringPlanId(plan);
+}
+
+/** Our plan for a Razorpay subscription entity: by its plan_id, else its notes. */
+function planFromSubscription(entity) {
+  for (const plan of Object.keys(PLANS)) {
+    if (entity?.plan_id && recurringPlanId(plan) === entity.plan_id) return plan;
+  }
+  const noted = entity?.notes?.plan;
+  return PLANS[noted] ? noted : null;
+}
+
+const fromUnix = (sec) => (sec ? new Date(Number(sec) * 1000) : null);
+
+/** Razorpay signs a subscription's first payment as payment_id|subscription_id. */
+function verifySubscriptionSignature(paymentId, subscriptionId, signature) {
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!secret || !paymentId || !subscriptionId || !signature) return false;
+  const expected = crypto.createHmac('sha256', secret).update(`${paymentId}|${subscriptionId}`).digest('hex');
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(String(signature), 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Apply one billing event through migration 024's function: exactly once per
+ * event id, status only from newer events, a period extended only by a new
+ * payment. Missing function: a 503 naming the migration, never a fallback.
+ */
+async function applySubscriptionEvent(db, e) {
+  const { data, error } = await db.rpc('apply_subscription_event', {
+    p_event_id: e.eventId,
+    p_event_type: e.type,
+    p_event_at: e.at.toISOString(),
+    p_subscription_id: e.subscriptionId,
+    p_status: e.status || null,
+    p_plan: e.plan || null,
+    p_current_end: e.currentEnd ? e.currentEnd.toISOString() : null,
+    p_payment_id: e.paymentId || null,
+    p_amount: e.amount ?? null,
+    p_grace_days: GRACE_DAYS
+  });
+  if (error) {
+    if (error.code === 'PGRST202') {
+      const err = new Error(
+        'apply_subscription_event is missing (PGRST202). ' +
+        'Run server/db/migrations/024_recurring_billing.sql in the Supabase SQL Editor.'
+      );
+      err.code = 'PGRST202';
+      throw err;
+    }
+    throw error;
+  }
+  return Array.isArray(data) ? data[0] : data;
+}
 
 // Payment window is open unless explicitly enforced (10:00–11:00 AM IST).
 const isPaymentWindowOpen = () => {
@@ -210,7 +288,9 @@ router.get('/plans', (req, res) => {
     plans: PLANS,
     windowOpen: isPaymentWindowOpen(),
     isMock: isMockMode(),
-    paymentsAvailable: !paidPlansUnavailable()
+    paymentsAvailable: !paidPlansUnavailable(),
+    // Which plans renew automatically (a Razorpay plan id is configured).
+    recurring: Object.fromEntries(Object.keys(PLANS).map(p => [p, recurringAvailable(p)]))
   });
 });
 
@@ -371,6 +451,133 @@ router.post('/verify-payment', protect, asyncHandler(async (req, res) => {
   });
 }, 'Could not verify that payment'));
 
+// Statuses in which a recurring subscription still has a live mandate.
+const LIVE_RECURRING = ['created', 'authenticated', 'active', 'pending'];
+
+/**
+ * POST /api/subscriptions/create-subscription
+ *
+ * Starts a Razorpay subscription for a plan that has a recurring plan id. The
+ * checkout then runs with `subscription_id` instead of `order_id`, Razorpay
+ * stores the mandate and charges each period, and every charge reaches us as
+ * subscription.charged. The subscription id is saved on the user now, so those
+ * webhooks can find who they are about.
+ */
+router.post('/create-subscription', protect, asyncHandler(async (req, res) => {
+  const plan = String(req.body?.plan || '').toLowerCase();
+  if (!PLANS[plan]) return res.status(400).json({ message: 'Invalid plan' });
+
+  if (paidPlansUnavailable() || !recurringAvailable(plan)) {
+    return res.status(503).json({ message: 'Auto-renewing plans are not available right now' });
+  }
+
+  const row = req.userRow;
+  if (row.razorpay_subscription_id && LIVE_RECURRING.includes(row.subscription_status)) {
+    return res.status(409).json({ message: 'You already have an auto-renewing plan. Cancel it first to switch.' });
+  }
+
+  const sub = await getRazorpay().subscriptions.create({
+    plan_id: recurringPlanId(plan),
+    total_count: RECURRING_CYCLES,
+    customer_notify: 1,
+    notes: { user_id: req.user.id, plan }
+  });
+
+  const { error } = await getSupabase().from('users').update({
+    razorpay_subscription_id: sub.id,
+    subscription_status: sub.status || 'created'
+  }).eq('id', req.user.id);
+  if (error) throw error;
+
+  res.json({
+    subscriptionId: sub.id,
+    plan,
+    amount: PLANS[plan].price,
+    keyId: process.env.RAZORPAY_KEY_ID
+  });
+}, 'Could not start that subscription'));
+
+/**
+ * POST /api/subscriptions/verify-subscription
+ *
+ * The checkout's success callback for a subscription. Verifies Razorpay's
+ * signature (payment_id|subscription_id), reads the subscription's period from
+ * Razorpay rather than trusting the browser, and applies it as the first
+ * charge. The subscription.charged webhook for the same payment arrives too;
+ * migration 024 records a payment id once, so whichever comes second extends
+ * nothing.
+ */
+router.post('/verify-subscription', protect, asyncHandler(async (req, res) => {
+  const { razorpayPaymentId, razorpaySubscriptionId, razorpaySignature } = req.body || {};
+  const razorpay = getRazorpay();
+  if (!razorpay) return res.status(503).json({ message: 'Auto-renewing plans are not available right now' });
+
+  if (!razorpaySubscriptionId || razorpaySubscriptionId !== req.userRow.razorpay_subscription_id) {
+    return res.status(400).json({ message: 'Subscription mismatch' });
+  }
+  if (!verifySubscriptionSignature(razorpayPaymentId, razorpaySubscriptionId, razorpaySignature)) {
+    return res.status(400).json({ message: 'Payment verification failed' });
+  }
+
+  const sub = await razorpay.subscriptions.fetch(razorpaySubscriptionId);
+  const plan = planFromSubscription(sub);
+  if (!plan) return res.status(400).json({ message: 'Unknown plan on that subscription' });
+
+  // Right after the first charge Razorpay may not have filled current_end
+  // yet; one period from now is what the charge bought.
+  const currentEnd = fromUnix(sub.current_end) || extendFrom(null, PLAN_DAYS);
+
+  const result = await applySubscriptionEvent(getSupabase(), {
+    eventId: `verify:${razorpayPaymentId}`,
+    type: 'subscription.charged',
+    /*
+     * Ordered before every Razorpay event, on purpose. Webhooks are stamped by
+     * Razorpay's clock in whole seconds; stamping this with ours would make a
+     * webhook sent a moment later look older and be ignored. At the epoch it
+     * still sets the status when nothing has arrived yet, and any real event
+     * supersedes it. The payment and period it carries are not ordered at all.
+     */
+    at: new Date(0),
+    subscriptionId: razorpaySubscriptionId,
+    status: sub.status === 'authenticated' ? 'active' : sub.status,
+    plan,
+    currentEnd,
+    paymentId: razorpayPaymentId,
+    amount: PLANS[plan].price / 100
+  });
+
+  res.json({
+    message: 'Payment verified! Your plan renews automatically.',
+    subscription: { plan, expiresAt: result?.new_expires_at || null, autoRenew: true }
+  });
+}, 'Could not verify that subscription'));
+
+/** A subscription.* webhook, applied through migration 024. */
+async function handleSubscriptionWebhook(req, event) {
+  const entity = event.payload?.subscription?.entity || {};
+  const payment = event.payload?.payment?.entity || null;
+  if (!entity.id) return { received: true, ignored: 'no subscription id' };
+
+  const plan = planFromSubscription(entity);
+  const charged = event.event === 'subscription.charged' && payment?.id;
+
+  const result = await applySubscriptionEvent(getSupabase(), {
+    // Razorpay's own id for this delivery; redeliveries reuse it.
+    eventId: req.headers['x-razorpay-event-id'] ||
+      `${event.event}:${entity.id}:${payment?.id || event.created_at}`,
+    type: event.event,
+    at: fromUnix(event.created_at) || new Date(),
+    subscriptionId: entity.id,
+    status: entity.status,
+    plan,
+    currentEnd: fromUnix(entity.current_end),
+    paymentId: charged && plan ? payment.id : null,
+    amount: charged && payment.amount != null ? Number(payment.amount) / 100 : null
+  });
+
+  return { received: true, outcome: result?.outcome };
+}
+
 /**
  * POST /api/subscriptions/webhook — Razorpay server-to-server callback.
  *
@@ -424,6 +631,11 @@ router.post('/webhook', async (req, res) => {
    * risk back with it.
    */
   try {
+    // Recurring plans (migration 024): every subscription.* lifecycle event.
+    if (String(event.event || '').startsWith('subscription.')) {
+      return res.json(await handleSubscriptionWebhook(req, event));
+    }
+
     if (event.event !== 'payment.captured' && event.event !== 'order.paid') {
       return res.json({ received: true, ignored: event.event });
     }
@@ -648,7 +860,38 @@ async function cancelSubscription(db, row) {
 }
 
 router.post('/cancel', protect, asyncHandler(async (req, res) => {
-  const result = await cancelSubscription(getSupabase(), req.userRow);
+  /*
+   * An auto-renewing plan: stop the future charges and keep what was paid for.
+   * That is what "cancel" means for a subscription, so here it does not forfeit
+   * the rest of the period the way cancelling a one-time plan below does.
+   */
+  const row = req.userRow;
+  if (row.razorpay_subscription_id && LIVE_RECURRING.includes(row.subscription_status)) {
+    const razorpay = getRazorpay();
+    if (!razorpay) return res.status(503).json({ message: 'Billing is not available right now' });
+
+    const sub = await razorpay.subscriptions.cancel(row.razorpay_subscription_id, true);
+    const result = await applySubscriptionEvent(getSupabase(), {
+      eventId: `cancel:${row.razorpay_subscription_id}`,
+      type: 'subscription.cancel_requested',
+      at: new Date(),
+      subscriptionId: row.razorpay_subscription_id,
+      status: 'cancelled',
+      plan: planFromSubscription(sub) || null,
+      currentEnd: fromUnix(sub?.current_end)
+    });
+    const expiresAt = result?.new_expires_at || row.subscription_expires_at || null;
+    return res.json({
+      message: expiresAt
+        ? `Auto-renew is off. Your plan stays active until ${new Date(expiresAt).toLocaleDateString('en-IN')}.`
+        : 'Auto-renew is off.',
+      subscription: { plan: row.subscription_plan, expiresAt },
+      autoRenew: false,
+      daysForfeited: 0
+    });
+  }
+
+  const result = await cancelSubscription(getSupabase(), row);
 
   if (result && result.refused === 'not_paid') {
     return res.status(400).json({ message: 'You are not on a paid plan' });
@@ -707,3 +950,8 @@ module.exports.startTrialFor = startTrialFor;
 // returns 'free', so the caller passes null rather than the stale date -- and
 // untestable code that claims to handle a case is worse than no code at all.
 module.exports.extendFrom = extendFrom;
+
+// Recurring billing (migration 024), exported for tests.
+module.exports.verifySubscriptionSignature = verifySubscriptionSignature;
+module.exports.planFromSubscription = planFromSubscription;
+module.exports.__setRazorpayForTests = (fake) => { razorpayForTests = fake; };
